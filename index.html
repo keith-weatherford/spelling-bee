@@ -88,6 +88,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
   <section class="panel" aria-labelledby="h-how">
     <h2 id="h-how">How to run it</h2>
     <ol class="small">
+      <li><b>Bee mode</b> runs the real routine: say the word, spell it, say the word again. Saying the word at the end locks in the answer, and the app checks it about 2 seconds after your kid stops talking (no need to tap Done). Saying “can I start over” restarts the spelling, but as in the real bee, letters already said can't change. Uses the same Worker settings as Mode E.</li>
       <li><b>Mode E</b> records the whole spelling and sends it to Google when you tap Done. Letters appear 1–2 seconds later, not while spelling. Enter the Worker URL and passcode once per device.</li>
       <li>On a Fire tablet (Silk), use <b>Mode E</b> (or Mode C). It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
       <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
@@ -114,6 +115,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
           <option value="restart">Mode A: short bursts</option>
           <option value="vosk">Mode C: on-device</option>
           <option value="cloud">Mode E: record + Google Cloud</option>
+          <option value="bee">Bee mode: word, spell, word</option>
         </select>
       </div>
     </div>
@@ -295,7 +297,103 @@ function anyAltCorrect(segments, target){
   }
   return combos.some(c=>isCorrect(parseLetters(c,target).letters,target));
 }
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms};
+
+/* ---------- Bee mode analysis (pure; unit-tested) ----------
+   Two Google passes of the same clip: "plain" finds the spoken word and "start over"; "letters" gives the spelling.
+   Word timestamps line them up: [word] letters [start over] letters ... [word = lock-in]. */
+function tsec(t){ if (t==null) return null; if (typeof t==="number") return t; if (typeof t==="object") return (+t.seconds||0)+(+t.nanos||0)/1e9; const v=parseFloat(String(t)); return isNaN(v)?null:v; }
+function wordsOf(results){
+  const out=[];
+  for (const r of results||[]){
+    const a=(r.alternatives||[])[0]; if(!a) continue;
+    if (a.words && a.words.length) for (const x of a.words) out.push({w:x.word, s:tsec(x.startTime), e:tsec(x.endTime)});
+    else for (const t of (a.transcript||"").trim().split(/\s+/).filter(Boolean)) out.push({w:t, s:null, e:null});
+  }
+  return out;
+}
+function lev(a,b){ const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let prev=[...Array(n+1).keys()];
+  for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; } return prev[n]; }
+function clean(w){ return norm(String(w)).replace(/[^a-z]/g,""); }
+/* where the bee word itself was spoken (fuzzy: it only has to be recognizable, pronunciation isn't scored) */
+function findWordHits(words, target){
+  const forms = targetForms(target), hits=[];
+  for (let i=0;i<words.length;i++){
+    for (let len=1; len<=Math.min(3,words.length-i); len++){
+      const parts = words.slice(i,i+len).map(x=>clean(x.w));
+      // a word split by Google ("scaff olding") may be joined, but never swallow single spelled letters
+      if (len>1 && parts.some(x=>x.length<2)) break;
+      const joined = parts.join("");
+      if (joined.length < 2) continue;
+      const ok = forms.some(f => { const tol = f.length<=4?0 : f.length<=7?1 : 2; return lev(joined,f)<=tol; });
+      if (ok){ hits.push({i, j:i+len, s:words[i].s, e:words[i+len-1].e}); i += len-1; break; }
+    }
+  }
+  return hits;
+}
+function findRestarts(words){
+  const hits=[]; const t=words.map(x=>clean(x.w));
+  for (let i=0;i<t.length;i++){
+    if (t[i]==="restart" || t[i]==="startover"){ hits.push({i, j:i+1, s:words[i].s, e:words[i].e}); continue; }
+    if (t[i]==="start"){ for (let k=i+1;k<=Math.min(i+2,t.length-1);k++) if (t[k]==="over"||t[k]==="again"){
+      // swallow "can I / may I" before it
+      let a=i; while (a>0 && i-a<2 && ["can","may","i","could"].includes(t[a-1])) a--;
+      hits.push({i:a, j:k+1, s:words[a].s, e:words[k].e}); i=k; break; } }
+  }
+  return hits;
+}
+/* lock-in check on the plain pass alone (used while still recording) */
+function isLockedIn(plainWords, target){
+  const hits = findWordHits(plainWords, target); if (!hits.length) return false;
+  const last = hits[hits.length-1];
+  const fillers = new Set(["um","uh","er","okay","ok"]);
+  const after = plainWords.slice(last.j).filter(x=>!fillers.has(clean(x.w)));
+  if (after.length) return false;
+  const restarts = findRestarts(plainWords);
+  const startIdx = (hits.length>1 && hits[0].i<=1) ? hits[0].j : 0;
+  const lastRestart = restarts.filter(r=>r.j<=last.i).pop();
+  const from = Math.max(startIdx, lastRestart ? lastRestart.j : 0);
+  return (last.i - from) >= 2; // some spelling between the opening (or last restart) and the closing word
+}
+/* full analysis once recording ends */
+function analyzeBee(plainResults, letterResults, target, strict){
+  const plain = wordsOf(plainResults), letters = wordsOf(letterResults);
+  const hits = findWordHits(plain, target), restarts = findRestarts(plain);
+  const firstLetterIdx = 0;
+  const opening = hits.length && hits[0].i <= 1 && !(hits.length===1 && hits[0].j>=plain.length && plain.length>2) ? hits[0] : null;
+  const lastHit = hits.length ? hits[hits.length-1] : null;
+  const fillers = new Set(["um","uh","er","okay","ok"]);
+  const closing = lastHit && lastHit!==opening && plain.slice(lastHit.j).every(x=>fillers.has(clean(x.w))) ? lastHit : null;
+  const timed = letters.length && letters.every(x=>x.s!=null) && plain.every(x=>x.s!=null);
+  const notes = [];
+  let attempts;
+  if (timed){
+    const bounds=[]; let t0 = opening ? opening.e : -1;
+    for (const r of restarts){ if (r.s > t0 && (!closing || r.s < closing.s)){ bounds.push([t0, r.s]); t0 = r.e; } }
+    bounds.push([t0, closing ? closing.s : 1e9]);
+    attempts = bounds.map(([a,b]) => letters.filter(x => { const mid=(x.s+x.e)/2; return mid>a && mid<b; }).map(x=>x.w).join(" "));
+  } else {
+    attempts = [letters.map(x=>x.w).join(" ")];
+    if (restarts.length) notes.push("No timing from Google, so start-over couldn't be placed; scored the whole recording.");
+  }
+  const parsed = attempts.map(a => parseLetters(a, target, {joined:true}));
+  const finalP = parsed[parsed.length-1] || {letters:"", alts:[], mergedWords:[], cloud:true};
+  let verdict = verdictFor(finalP, target);
+  let finalLetters = finalP.letters;
+  if (verdict==="correct" && !isCorrect(finalLetters, target)) finalLetters = finalP.alts.find(a=>isCorrect(a,target)) || finalLetters;
+  // Scripps: after starting over, the letters already said can't change
+  let violation = null;
+  if (strict){
+    for (let k=0;k+1<parsed.length;k++){
+      const prev = parsed[k].letters, next = k+1===parsed.length-1 ? finalLetters : parsed[k+1].letters;
+      if (prev && !next.startsWith(prev)){ violation = {before:prev, after:next}; break; }
+    }
+    if (violation && verdict==="correct") verdict = "wrong";
+  }
+  if (!opening && strict) notes.push("Remember to say the word before spelling it.");
+  return { attempts: parsed.map(p=>p.letters), final: finalLetters, verdict, opening: !!opening, locked: !!closing,
+           restarts: restarts.length, violation, notes, plainText: plain.map(x=>x.w).join(" "), timed };
+}
+if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,isLockedIn,findWordHits,findRestarts,wordsOf};
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
@@ -527,13 +625,107 @@ async function sendCloud(){
   busy = false; finished = false; finishOnce();
 }
 
+/* ---------- Bee mode: say the word, spell it, say the word again (lock-in). "Start over" restarts the spelling. ---------- */
+const B = { rec:null, stream:null, chunks:[], ctx:null, an:null, timer:null, checking:false, lastSpeech:0, speechSinceCheck:false,
+            startedAt:0, floor:1, promptShown:false, stopping:false, cancelled:false };
+async function postClip(blob, pass, w){
+  const c = getCloud();
+  const r = await fetch(`${c.url}/?pass=${pass}&m=${encodeURIComponent(c.model)}${w?`&w=${encodeURIComponent(w)}`:""}`,
+                        { method:"POST", headers:{ "X-Passcode":c.pass, "Content-Type":blob.type }, body:blob });
+  const d = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
+  if (!r.ok || d.error) throw new Error((d.error && (d.error.message||d.error)) || ("HTTP "+r.status));
+  return d;
+}
+function beeBlob(){ return new Blob(B.chunks, {type:(B.rec && B.rec.mimeType) || "audio/webm"}); }
+async function startBee(){
+  if (!cloudReady()){ listening=false; render(); return; }
+  try{ B.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); }
+  catch(e){ lastError="microphone: "+(e.name||e); listening=false; render(); return; }
+  const type = ["audio/webm;codecs=opus","audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+  Object.assign(B, { chunks:[], checking:false, lastSpeech:0, speechSinceCheck:false, startedAt:performance.now(), floor:1, promptShown:false, stopping:false, cancelled:false });
+  B.rec = new MediaRecorder(B.stream, type?{mimeType:type}:undefined);
+  B.rec.ondataavailable = e => { if (e.data && e.data.size) B.chunks.push(e.data); };
+  B.rec.start(250);
+  B.ctx = new (window.AudioContext||window.webkitAudioContext)();
+  const src = B.ctx.createMediaStreamSource(B.stream); B.an = B.ctx.createAnalyser(); B.an.fftSize = 1024; src.connect(B.an);
+  B.buf = new Float32Array(B.an.fftSize);
+  voskStatus("Say the word, spell it, then say the word again", "ok");
+  B.timer = setInterval(beeTick, 100);
+  render();
+}
+function beeTick(){
+  if (!B.an) return;
+  B.an.getFloatTimeDomainData(B.buf); let s=0; for (const v of B.buf) s+=v*v; const rms=Math.sqrt(s/B.buf.length);
+  $("level").style.width = Math.min(100, rms*400)+"%";
+  const now = performance.now();
+  B.floor = Math.min(B.floor + 0.0002, Math.max(rms, 0.001));          // background noise estimate
+  if (rms > Math.max(0.02, B.floor*3)){ B.lastSpeech = now; B.speechSinceCheck = true; }
+  if (now - B.startedAt > 55000){ finishBee("time"); return; }          // Google's limit is 60 s per clip
+  if (B.speechSinceCheck && B.lastSpeech && now - B.lastSpeech > 1400 && !B.checking) checkLock();
+  if (!B.promptShown && B.lastSpeech && now - B.lastSpeech > 5000 && !B.checking){
+    B.promptShown = true; voskStatus("Say the word again to lock in your spelling, or say “start over”", "wait");
+  }
+}
+async function checkLock(){
+  B.checking = true; B.speechSinceCheck = false;
+  try{ B.rec.requestData(); }catch(e){}
+  await new Promise(r => setTimeout(r, 150));
+  try{
+    const d = await postClip(beeBlob(), "plain", word());
+    if (!listening || B.stopping) { B.checking=false; return; }
+    if (isLockedIn(wordsOf(d.results), word())){ B.checking=false; finishBee("locked"); return; }
+    if (!B.promptShown) voskStatus("Listening…", "ok");
+  }catch(e){ voskStatus("Cloud error: "+String(e.message||e).slice(0,140), "no"); }
+  B.checking = false;
+}
+function releaseBeeMic(){
+  clearInterval(B.timer); B.timer=null;
+  try{ B.stream && B.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  try{ B.ctx && B.ctx.close(); }catch(e){}
+  B.an=null; $("level").style.width="0";
+}
+function cancelBee(){ B.cancelled=true; try{ B.rec && B.rec.state!=="inactive" && B.rec.stop(); }catch(e){} releaseBeeMic(); B.rec=null; }
+async function finishBee(reason){
+  if (B.stopping || !B.rec) return;
+  B.stopping = true; listening = false; busy = true; render();
+  await new Promise(res => { B.rec.onstop = res; try{ B.rec.state!=="inactive" ? B.rec.stop() : res(); }catch(e){ res(); } });
+  releaseBeeMic();
+  const blob = beeBlob(); B.rec = null;
+  if (B.cancelled){ busy=false; B.stopping=false; render(); return; }
+  const w = word();
+  voskStatus(reason==="locked" ? "Locked in. Scoring…" : "Scoring…", "wait");
+  const t0 = performance.now();
+  try{
+    const [pl, le] = await Promise.all([postClip(blob, "plain", w), postClip(blob, "letters", "")]);
+    const a = analyzeBee(pl.results, le.results, w, true);
+    let msg;
+    if (!a.final) msg = "Didn't catch any letters. Tap Mic mess-up / redo and try again.";
+    else if (a.violation) msg = `Incorrect. After “start over”, the letters can't change (Scripps rule). First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
+    else if (a.verdict==="correct") msg = a.locked ? "Correct, and locked in." : "Correct, but not locked in. Say the word again at the end to lock in your answer.";
+    else msg = `Incorrect. The word is “${w}”.` + (a.locked ? "" : " (Not locked in: say the word at the end.)");
+    if (a.notes.length) msg += " " + a.notes.join(" ");
+    const timeline = (a.opening ? "Said the word ✓" : "No word first") + " · " +
+      a.attempts.map((x,i) => `Try ${i+1}: ${x || "—"}`).join(" · start over · ") + " · " + (a.locked ? "Locked in ✓" : "Not locked in");
+    current = { word:w, heard:a.final, merged:false, raw: timeline + "   |   Google (plain): “" + a.plainText + "”", alts:[], verdict: a.final ? a.verdict : "unclear",
+                strict: a.verdict==="correct", lenient: a.verdict==="correct", mode:"bee", beeMsg:msg, bee:a, mergedWords:[], ambiguous:[], error:"" };
+    voskStatus(`Answer in ${((performance.now()-t0)/1000).toFixed(1)} s`, "ok");
+  }catch(e){
+    lastError = String(e.message||e);
+    current = { word:w, heard:"", merged:false, raw:"", alts:[], verdict:"unclear", strict:false, lenient:false, mode:"bee",
+                beeMsg:"Cloud error: "+lastError.slice(0,160), mergedWords:[], ambiguous:[], error:lastError };
+    voskStatus("Cloud error: "+lastError.slice(0,140), "no");
+  }
+  busy = false; B.stopping = false; render();
+}
+
 function start(){
   const mode=$("mode").value;
-  if(mode!=="vosk" && mode!=="cloud" && !SR){ return; }
+  if(!["vosk","cloud","bee"].includes(mode) && !SR){ return; }
   segments=[]; baseSegments=[]; interim=""; lastError=""; current=null; V.confs=[];
   listening=true; $("truth").hidden=true; $("verdict").hidden=true;
   if (mode==="vosk"){ startVosk(); render(); return; }
   if (mode==="cloud"){ startCloud(); render(); return; }
+  if (mode==="bee"){ startBee(); render(); return; }
   if (mode==="local"){
     render();
     ensureLocal().then(ok => {
@@ -550,6 +742,7 @@ function stop(){
   listening=false;
   if ($("mode").value==="vosk"){ render(); stopVosk(); return; }
   if ($("mode").value==="cloud"){ render(); stopCloud(); return; }
+  if ($("mode").value==="bee"){ listening=true; finishBee("done"); return; }
   finished = false;
   try{ rec && rec.stop(); }catch(e){}
   // finish when the recognizer reports it has ended (last results delivered), or after 1.5 s at most
@@ -574,24 +767,25 @@ function render(){
   $("progress").textContent = `Word ${idx+1} of ${words().length}`;
   $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
   // Mode A restarts the mic after each pause; show the kid when it's safe to keep going
-  const micOn = micLive || ["vosk","cloud"].includes($("mode").value);
+  const micOn = micLive || ["vosk","cloud","bee"].includes($("mode").value);
   $("start").classList.toggle("listening", listening);
   $("start").classList.toggle("paused", listening && !micOn);
-  $("startlbl").textContent = busy ? "Checking…" : !listening ? "Start spelling" : $("mode").value==="cloud" ? "Recording, tap Done" : micOn ? "Listening, keep going" : "Wait for red…";
-  $("start").disabled = listening || busy || (!["vosk","cloud"].includes($("mode").value) && !SR);
-  $("voskbox").hidden = !["vosk","local","cloud"].includes($("mode").value);
-  $("cloudbox").hidden = $("mode").value!=="cloud"; $("done").disabled = !listening;
+  $("startlbl").textContent = busy ? "Checking…" : !listening ? "Start spelling" : $("mode").value==="cloud" ? "Recording, tap Done" : $("mode").value==="bee" ? "Listening…" : micOn ? "Listening, keep going" : "Wait for red…";
+  $("start").disabled = listening || busy || (!["vosk","cloud","bee"].includes($("mode").value) && !SR);
+  $("voskbox").hidden = !["vosk","local","cloud","bee"].includes($("mode").value);
+  $("cloudbox").hidden = !["cloud","bee"].includes($("mode").value); $("done").disabled = !listening;
   const live = parseLetters(heardText(), w).letters;
   const tiles = $("tiles"); tiles.innerHTML="";
   const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
   for (const o of ops){ const t=document.createElement("span"); t.className="tile "+o.t; t.textContent=o.ch; if(o.t==="x"||o.t==="gap") t.title="Should be: "+(o.want||"(nothing)"); tiles.append(t); }
   const others = current && current.mode==="cloud" ? [...new Set((current.alts||[]).flatMap(a=>a.slice(1)))].filter(Boolean) : [];
-  $("raw").textContent = (current?current.raw:heardText()).trim()
+  $("raw").textContent = (current && current.mode==="bee") ? current.raw : (current?current.raw:heardText()).trim()
     ? "Recognizer heard: “"+(current?current.raw:heardText()).trim()+"”" + (others.length ? "  (other guesses: “"+others.join("”, “")+"”)" : "")
     : (lastError?"Error: "+lastError:"");
   if (current){
     const v=$("verdict"); v.hidden=false;
     const vd=current.verdict;
+    if (current.mode==="bee" && current.beeMsg){ v.className="verdict "+(vd==="correct"?"ok":vd==="wrong"?"no":"wait"); v.textContent=current.beeMsg; $("truth").hidden=false; renderLog(); return; }
     v.className="verdict "+(vd==="correct"?"ok":(vd==="unsure"||vd==="unclear")?"wait":"no");
     v.textContent = vd==="correct" ? "App says: correct" + (current.merged && current.mode!=="cloud"?" (recognizer joined letters into a word, so double-check)":"")
       : vd==="unsure" ? `App isn't sure. Google wrote “${(current.ambiguous||[]).join("”, “")}”, which could be read more than one way. The full app would ask your kid to repeat that letter.`
@@ -632,7 +826,7 @@ $("skip").onclick = next;
 $("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
 $("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
 $("showword").onchange = render;
-$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if($("mode").value==="cloud") cloudReady(); render(); };
+$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if(["cloud","bee"].includes($("mode").value)) cloudReady(); render(); };
 if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
 $("copy").onclick = async () => {
   const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
@@ -645,7 +839,7 @@ $("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textCo
 
 // Release the mic when this tab is hidden or closed. Otherwise a background tab keeps restarting
 // its listening session and can starve the tab you're actually using.
-function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } render(); }
+function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } if (B.rec) cancelBee(); render(); }
 document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
 window.addEventListener("pagehide", releaseMic);
 // Safety: stop auto-restarting after 90 s so a forgotten session can't run forever
