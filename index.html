@@ -21,6 +21,7 @@
   --honey:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
   color-scheme:dark;}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body);padding:env(safe-area-inset-top,0px) 16px calc(env(safe-area-inset-bottom,0px) + 32px)}
 main{max-width:640px;margin:0 auto;display:grid;gap:20px;padding-block:20px}
@@ -66,6 +67,8 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 .stat{border:1px solid var(--line);border-radius:10px;padding:10px}
 .stat b{display:block;font:700 1.4rem/1.2 var(--display)}
 ol{margin:0;padding-left:1.2em;display:grid;gap:4px}
+.meter{display:inline-block;width:120px;height:10px;border-radius:5px;background:var(--line);overflow:hidden}
+.meter span{display:block;height:100%;width:0;background:var(--good);transition:width .1s linear}
 textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);padding:8px}
 </style>
 </head>
@@ -84,6 +87,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
   <section class="panel" aria-labelledby="h-how">
     <h2 id="h-how">How to run it</h2>
     <ol class="small">
+      <li>On a Fire tablet (Silk), use <b>Mode C</b>. It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
       <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
       <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
       <li>Tap what your kid <i>actually</i> said: <b>Spelled it right</b> or <b>Spelled it wrong</b>. That's the answer key the app is graded against.</li>
@@ -105,6 +109,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
         <select id="mode" title="Listening mode">
           <option value="restart">Mode A: short bursts</option>
           <option value="continuous">Mode B: continuous</option>
+          <option value="vosk">Mode C: on-device</option>
         </select>
       </div>
     </div>
@@ -117,6 +122,10 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
       <button id="hear">Hear word</button>
       <button id="start" class="primary"><span class="mic"><span class="dot"></span><span id="startlbl">Start spelling</span></span></button>
       <button id="done" disabled>Done</button>
+    </div>
+    <div id="voskbox" class="row small" hidden>
+      <span class="pill wait" id="voskstatus">Speech model not loaded</span>
+      <span class="meter" aria-label="Microphone level"><span id="level"></span></span>
     </div>
     <div>
       <span class="label">Letters heard</span>
@@ -221,6 +230,7 @@ function anyAltCorrect(segments, target){
 if (typeof module!=="undefined") module.exports={parseLetters,isCorrect,align,anyAltCorrect,targetForms};
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
 <script>
 const SETS = {
   g2:["tiptoe","pudding","beets","invent","globe","badly","maple","splinter","pimple","tabby"],
@@ -241,13 +251,15 @@ function word(){ return words()[idx]; }
 async function diag(){
   const rows = [];
   rows.push(["Secure (HTTPS) page", window.isSecureContext, window.isSecureContext?"Yes":"No: open the https:// link"]);
-  rows.push(["Speech recognition in this browser", !!SR, SR?"Yes":"No: use Chrome, not the Claude or Facebook in-app browser"]);
+  const silk = /Silk\//.test(navigator.userAgent);
+  rows.push(["Browser speech recognition (Modes A/B)", silk?false:!!SR, silk?"Not usable in Silk: use Mode C":SR?"Present (may still fail)":"No: use Mode C"]);
+  rows.push(["On-device recognition (Mode C)", !!(window.WebAssembly && window.Worker && navigator.mediaDevices && window.indexedDB), (window.WebAssembly && navigator.mediaDevices)?"Supported":"Not supported"]);
   rows.push(["Text-to-speech voice", "speechSynthesis" in window, ("speechSynthesis" in window)?"Yes":"No"]);
   let mic = "wait", micTxt = "Asked when you tap Start";
   try{ const p = await navigator.permissions.query({name:"microphone"}); mic = p.state==="granted"?true:p.state==="denied"?false:"wait";
        micTxt = p.state==="granted"?"Allowed":p.state==="denied"?"Blocked: allow mic in Chrome site settings":"Asked when you tap Start"; }catch(e){}
   rows.push(["Microphone permission", mic, micTxt]);
-  rows.push(["Browser", "info", navigator.userAgent.match(/(Chrome|CriOS|Firefox|Safari|Edg)\/[\d.]+/)?.[0] || "unknown"]);
+  rows.push(["Browser", "info", navigator.userAgent.match(/(Silk|Chrome|CriOS|Firefox|Safari|Edg)\/[\d.]+/)?.[0] || "unknown"]);
   $("diag").innerHTML = "";
   for (const [k, ok, txt] of rows){
     const d=document.createElement("div"); const s=document.createElement("span"); s.textContent=k;
@@ -291,15 +303,76 @@ function makeRec(continuous){
   return r;
 }
 let baseSegments = []; let lastError = "";
+
+/* ---------- Mode C: on-device recognizer (Vosk, letters-only grammar) ---------- */
+// absolute URL: the library resolves relative paths from its worker, which drops the /spelling-bee/ folder
+const MODEL_URL = new URL("vosk-model-small-en-us-0.15.tar.gz", location.href).href;
+const GRAMMAR = JSON.stringify([
+  ..."abcdefghijklmnopqrstuvwxyz".split(""),
+  "bee","see","why","you","are","oh","eye","tea","pee","jay","kay","el","em","en","ex","zee","gee","dee","vee","double","hyphen","[unk]"
+]);
+const V = { model:null, loading:null, rec:null, ctx:null, stream:null, node:null, src:null };
+function voskStatus(txt, cls){ const s=$("voskstatus"); s.textContent=txt; s.className="pill "+cls; }
+function loadVosk(){
+  if (V.model) return Promise.resolve(V.model);
+  if (V.loading) return V.loading;
+  if (!window.Vosk){ voskStatus("Speech library didn't load. Check the internet connection and reload.", "no"); return Promise.reject(new Error("no Vosk")); }
+  const t0 = performance.now();
+  voskStatus("Loading speech model (first time downloads about 40 MB)…", "wait");
+  V.loading = Promise.race([
+    Vosk.createModel(MODEL_URL),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error("timed out after 4 minutes")), 240000))
+  ]).then(m => { V.model=m; voskStatus(`Speech model ready (${((performance.now()-t0)/1000).toFixed(0)} s)`, "ok"); render(); return m; })
+    .catch(e => { V.loading=null; voskStatus("Speech model failed: "+(e && e.message || e), "no"); throw e; });
+  return V.loading;
+}
+async function startVosk(){
+  let model; try{ model = await loadVosk(); }catch(e){ listening=false; render(); return; }
+  try{
+    V.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+  }catch(e){ lastError = "microphone: "+(e.name||e); listening=false; render(); diag(); return; }
+  V.ctx = new (window.AudioContext||window.webkitAudioContext)();
+  V.rec = new model.KaldiRecognizer(V.ctx.sampleRate, GRAMMAR);
+  V.rec.setWords(true);
+  V.rec.on("result", m => { const r=m.result||{}; if(r.text){ segments.push([r.text]); (V.confs ||= []).push(...(r.result||[]).map(w=>[w.word, +w.conf.toFixed(2)])); } interim=""; render(); });
+  V.rec.on("partialresult", m => { interim = (m.result && m.result.partial) || ""; render(); });
+  V.src = V.ctx.createMediaStreamSource(V.stream);
+  V.node = V.ctx.createScriptProcessor(4096,1,1);
+  V.node.onaudioprocess = e => {
+    try{ V.rec.acceptWaveform(e.inputBuffer); }catch(err){ lastError=String(err); }
+    const d=e.inputBuffer.getChannelData(0); let s=0; for(let i=0;i<d.length;i+=16) s+=d[i]*d[i];
+    $("level").style.width = Math.min(100, Math.sqrt(s/(d.length/16))*400)+"%";
+  };
+  V.src.connect(V.node); V.node.connect(V.ctx.destination);
+  render();
+}
+function stopVosk(){
+  try{ V.rec && V.rec.retrieveFinalResult(); }catch(e){}
+  setTimeout(() => {
+    try{ V.node && V.node.disconnect(); V.src && V.src.disconnect(); }catch(e){}
+    try{ V.stream && V.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ V.ctx && V.ctx.close(); }catch(e){}
+    try{ V.rec && V.rec.remove(); }catch(e){}
+    $("level").style.width="0";
+    if (interim && !segments.length) segments.push([interim]);
+    interim=""; finish();
+  }, 900);
+}
+
 function start(){
-  if(!SR){ return; }
-  segments=[]; baseSegments=[]; interim=""; lastError=""; current=null;
-  listening=true; rec = makeRec($("mode").value==="continuous");
+  const mode=$("mode").value;
+  if(mode!=="vosk" && !SR){ return; }
+  segments=[]; baseSegments=[]; interim=""; lastError=""; current=null; V.confs=[];
+  listening=true; $("truth").hidden=true; $("verdict").hidden=true;
+  if (mode==="vosk"){ startVosk(); render(); return; }
+  rec = makeRec(mode==="continuous");
   try{ rec.start(); }catch(e){ lastError=String(e); }
-  $("truth").hidden=true; $("verdict").hidden=true; render();
+  render();
 }
 function stop(){
-  listening=false; try{ rec && rec.stop(); }catch(e){}
+  listening=false;
+  if ($("mode").value==="vosk"){ render(); stopVosk(); return; }
+  try{ rec && rec.stop(); }catch(e){}
   // give the recognizer a moment to deliver its last final result
   setTimeout(finish, 700);
 }
@@ -309,7 +382,7 @@ function finish(){
   const p = parseLetters(top, w);
   current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
               strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
-              mode:$("mode").value, error:lastError };
+              mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
   render();
 }
 
@@ -318,9 +391,10 @@ function render(){
   const w = word();
   $("progress").textContent = `Word ${idx+1} of ${words().length}`;
   $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
-  $("start").parentElement; $("start").classList.toggle("listening", listening);
+  $("start").classList.toggle("listening", listening);
   $("startlbl").textContent = listening ? "Listening…" : "Start spelling";
-  $("start").disabled = listening || !SR; $("done").disabled = !listening;
+  $("start").disabled = listening || ($("mode").value!=="vosk" && !SR);
+  $("voskbox").hidden = $("mode").value!=="vosk"; $("done").disabled = !listening;
   const live = parseLetters(heardText(), w).letters;
   const tiles = $("tiles"); tiles.innerHTML="";
   const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
@@ -362,6 +436,8 @@ $("skip").onclick = next;
 $("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
 $("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
 $("showword").onchange = render;
+$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); render(); };
+if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
 $("copy").onclick = async () => {
   const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
   try{ await navigator.clipboard.writeText(txt); $("copymsg").textContent="Copied. Paste it into the chat."; }
