@@ -223,7 +223,9 @@ function parseLetters(transcript, target, opts={}){
       if (t.length===1){ pieces.push([t]); continue; }
       if (CLOUD_NAMES[t]){ pieces.push([CLOUD_NAMES[t]]); continue; }
       if (["hyphen","dash","space","capital","uppercase","uh","um","er"].includes(t)) continue;
-      merged = true; pieces.push([t]); continue;
+      // Google sometimes writes a letter as its name inside a joined run ("younwavering" for U-N-W...):
+      // keep the raw reading first, plus readings with letter names swapped back to letters
+      merged = true; pieces.push([t, ...nameVariants(t)]); continue;
     }
     if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
     if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
@@ -238,13 +240,29 @@ function parseLetters(transcript, target, opts={}){
   let combos = [""];
   for (const p of pieces){ const n=[]; for (const c of combos) for (const o of p){ if(n.length<256) n.push(c+o); } combos=n; }
   const alts = [...new Set(combos)].filter(c=>c!==letters);
-  return {letters, merged, alts, ambiguous, mergedWords};
+  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined};
+}
+const NAME_SWAPS = [["you","u"],["why","y"],["are","r"],["see","c"],["bee","b"],["tee","t"],["tea","t"],["pee","p"],["jay","j"],
+  ["kay","k"],["eye","i"],["oh","o"],["zee","z"],["dee","d"],["gee","g"],["vee","v"],["cue","q"],["ex","x"],["el","l"],["em","m"],["en","n"]];
+function nameVariants(t){
+  const out = new Set(); let frontier = [t];
+  for (let round=0; round<3 && frontier.length; round++){
+    const next = [];
+    for (const s of frontier) for (const [name, L] of NAME_SWAPS){
+      let i = s.indexOf(name);
+      while (i !== -1 && out.size < 64){ const v = s.slice(0,i)+L+s.slice(i+name.length); if(!out.has(v) && v!==t){ out.add(v); next.push(v); } i = s.indexOf(name, i+1); }
+    }
+    frontier = next;
+  }
+  return [...out];
 }
 /* correct | unsure (only an ambiguous reading matches) | unclear (recognizer heard words, not letters) | wrong */
 function isSubseq(a, b){ let i=0; for (const ch of b){ if (ch===a[i]) i++; } return i===a.length; }
 function verdictFor(p, target, segCount=1){
   if (!p.letters) return "unclear"; // nothing heard
   if (isCorrect(p.letters, target)) return "correct";
+  // cloud: a letter name inside a joined run (you->u, why->y...) is Google's formatting, not the kid's spelling
+  if (p.cloud && p.alts.some(a=>isCorrect(a, target))) return "correct";
   if (p.alts.some(a=>isCorrect(a, target))) return "unsure";
   // listening restarted mid-word and letters are only missing (never wrong): likely lost in the restart gap
   if (segCount > 1 && p.letters.length < targetForms(target)[0].length && targetForms(target).some(f=>isSubseq(p.letters, f))) return "unclear";
@@ -543,7 +561,8 @@ function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+int
 function finish(){
   const w = word(); const top = segments.map(s=>s[0]).join(" ");
   const p = parseLetters(top, w, {joined: $("mode").value==="cloud"});
-  current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
+  const shownLetters = (!isCorrect(p.letters, w) && p.cloud) ? (p.alts.find(a=>isCorrect(a,w)) || p.letters) : p.letters;
+  current = { word:w, heard:shownLetters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
               verdict:verdictFor(p,w, $("mode").value==="cloud" ? 1 : segments.length), // Mode E records one continuous clip: no restarts ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
               mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
   render();
