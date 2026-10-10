@@ -179,6 +179,11 @@ const SOUNDS = {
   s:["s","ess","es","esse"], t:["t","tea","tee","ti","te"], u:["u","you","yu","ewe","yoo"], v:["v","vee","ve","vi"],
   w:["w","doubleyou","double-u","dublu"], x:["x","ex","ecks","eggs"], y:["y","why","wye","why's"], z:["z","zee","zed","zea"]
 };
+/* Cloud mode (Mode E): Google is already biased toward letters, so only accept the standard letter names.
+   No guessing from look-alike words ("all", "it", "and"...), which caused wrong letters like O -> L. */
+const CLOUD_NAMES = { bee:"b", see:"c", sea:"c", dee:"d", ee:"e", ef:"f", eff:"f", gee:"g", aitch:"h", eye:"i", jay:"j",
+  kay:"k", el:"l", ell:"l", em:"m", en:"n", oh:"o", pee:"p", cue:"q", queue:"q", are:"r", ess:"s", tee:"t", you:"u",
+  vee:"v", ex:"x", why:"y", zee:"z", zed:"z" };
 const TOKEN2LETTER = {};
 for (const [L, arr] of Object.entries(SOUNDS)) for (const s of arr) if (!(s in TOKEN2LETTER)) TOKEN2LETTER[s] = L;
 TOKEN2LETTER["aye"] = "i";
@@ -214,6 +219,12 @@ function parseLetters(transcript, target, opts={}){
     }
     // "will you" is usually W, but sometimes it swallowed more letters ("w a v e r"): read it as W, and if that
     // doesn't give the right spelling, call it unclear rather than wrong
+    if (opts.joined){ // cloud mode: letters, standard letter names, or a run of letters Google joined together
+      if (t.length===1){ pieces.push([t]); continue; }
+      if (CLOUD_NAMES[t]){ pieces.push([CLOUD_NAMES[t]]); continue; }
+      if (["hyphen","dash","space","capital","uppercase","uh","um","er"].includes(t)) continue;
+      merged = true; pieces.push([t]); continue;
+    }
     if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
     if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
     if (t.length===1){ pieces.push([t]); continue; }
@@ -555,7 +566,10 @@ function render(){
   const tiles = $("tiles"); tiles.innerHTML="";
   const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
   for (const o of ops){ const t=document.createElement("span"); t.className="tile "+o.t; t.textContent=o.ch; if(o.t==="x"||o.t==="gap") t.title="Should be: "+(o.want||"(nothing)"); tiles.append(t); }
-  $("raw").textContent = (current?current.raw:heardText()).trim() ? "Recognizer heard: “"+(current?current.raw:heardText()).trim()+"”" : (lastError?"Error: "+lastError:"");
+  const others = current && current.mode==="cloud" ? [...new Set((current.alts||[]).flatMap(a=>a.slice(1)))].filter(Boolean) : [];
+  $("raw").textContent = (current?current.raw:heardText()).trim()
+    ? "Recognizer heard: “"+(current?current.raw:heardText()).trim()+"”" + (others.length ? "  (other guesses: “"+others.join("”, “")+"”)" : "")
+    : (lastError?"Error: "+lastError:"");
   if (current){
     const v=$("verdict"); v.hidden=false;
     const vd=current.verdict;
