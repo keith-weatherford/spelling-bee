@@ -77,6 +77,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
 <main>
   <header style="display:grid;gap:6px">
     <h1>Spelling Mic Test</h1>
+    <p class="small"><span class="pill ok" id="ver">Page v20</span> <span class="pill wait" id="wver">Worker: not checked yet</span></p>
     <p class="muted">A 10-word check of whether this device can hear your kids spell letter by letter. Run it once with each kid on their own tablet before we build the full app.</p>
   </header>
 
@@ -103,7 +104,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
 
   <section class="panel" aria-labelledby="h-test">
     <div class="row" style="justify-content:space-between">
-      <h2 id="h-test">Test</h2>
+      <h2 id="h-test">Test <span class="pill ok" id="ver2" style="font-size:.75rem;vertical-align:middle">v20</span></h2>
       <div class="row">
         <label class="sr" for="set" style="position:absolute;left:-9999px">Word set</label>
         <select id="set">
@@ -398,13 +399,24 @@ function beeStructure(plainResults, target, duration){
   const windows = [];
   if (timed){
     let t0 = opening ? opening.e : 0;
-    for (const r of restarts){ if (r.s > t0 && (!closing || r.s < closing.s)){ windows.push([t0, r.s]); t0 = r.e; } }
+    for (const r of restarts){
+      if (r.s > t0 && (!closing || r.s < closing.s)){
+        windows.push([t0, r.s]); t0 = r.e;
+        // spellers often say the word again after "start over": skip it so it isn't read as letters
+        // (but Google may also write the spelled letters as the word: only skip it if it's too short to be
+        //  letters being spelled, about 0.3 s + 0.15 s per letter)
+        const again = hits.find(hh => hh.i === r.j && hh !== closing);
+        if (again && (again.e - again.s) < 0.3 + 0.15 * targetForms(target)[0].length) t0 = again.e;
+      }
+    }
     windows.push([t0, closing ? closing.s : (duration || 1e9)]);
   }
   return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
 }
 /* score the spelling attempts (one text per window; the last one is the answer) */
 function scoreBee(attemptTexts, target, strict, st, notes){
+  // after a start-over, the cut can catch the tail of "start over"; no bee word on the list starts with these
+  attemptTexts = attemptTexts.map((a,k) => k===0 ? a : a.replace(/^\s*(?:(?:start|over|again|restart)\b\s*)+/i, "").replace(/^\s*(over|again)(?=[a-z]{2,})/i, ""));
   const parsed = attemptTexts.map(a => { const words = splitGlued(a.split(/\s+/).filter(Boolean).map(w=>({w, s:null, e:null})), target);
     return parseLetters(words.map(x=>x.w).join(" "), target, {joined:true}); });
   const finalP = parsed[parsed.length-1] || {letters:"", alts:[], mergedWords:[], cloud:true};
@@ -445,6 +457,15 @@ if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubse
 
 <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
 <script>
+/* Version shown at the top so you can tell a reload picked up the latest page. Bump with every change. */
+const APP_VERSION = "20";
+const APP_BUILT = "Oct 10, 3:05 PM";
+let workerVersion = null;
+function noteWorker(d){
+  workerVersion = d.version || "2 or older";
+  const el = document.getElementById("wver"); if (!el) return;
+  el.textContent = "Worker v" + workerVersion; el.className = "pill " + (d.version ? "ok" : "no");
+}
 const SETS = {
   g2:["tiptoe","pudding","beets","invent","globe","badly","maple","splinter","pimple","tabby"],
   g4:["pleats","despair","obtain","scaffolding","unwavering","captivity","dwelling","spectators","griddle","Borneo"]
@@ -661,6 +682,7 @@ async function sendCloud(){
   try{
     const r = await fetch(`${c.url}/?m=${encodeURIComponent(c.model)}`, { method:"POST", headers:{ "X-Passcode": c.pass, "Content-Type": blob.type }, body: blob });
     const data = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
+    if (!data.error) noteWorker(data);
     if (!r.ok || data.error){
       lastError = (data.error && (data.error.message || data.error)) || ("HTTP "+r.status);
       voskStatus("Cloud error: "+String(lastError).slice(0,140), "no");
@@ -682,6 +704,7 @@ async function postClip(blob, pass, w, enc){
   const r = await fetch(`${c.url}/?${q}`, { method:"POST", headers:{ "X-Passcode":c.pass, "Content-Type":blob.type || "application/octet-stream" }, body:blob });
   const d = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
   if (!r.ok || d.error) throw new Error((d.error && (d.error.message||d.error)) || ("HTTP "+r.status));
+  noteWorker(d);
   return d;
 }
 function pcmDuration(){ let n=0; for (const a of B.pcm) n+=a.length; return n / B.rate; }
@@ -907,7 +930,7 @@ $("showword").onchange = render;
 $("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if(["cloud","bee"].includes($("mode").value)) cloudReady(); render(); };
 if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
 $("copy").onclick = async () => {
-  const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
+  const txt = JSON.stringify({page:APP_VERSION, worker:workerVersion, ua:navigator.userAgent, results}, null, 1);
   try{ await navigator.clipboard.writeText(txt); $("copymsg").textContent="Copied. Paste it into the chat."; }
   catch(e){ const d=$("dump"); d.hidden=false; d.value=txt; d.select(); $("copymsg").textContent="Select all the text below and copy it."; }
 };
@@ -925,6 +948,8 @@ let listenTimer=null;
 const _start = start; start = function(){ _start(); clearTimeout(listenTimer); listenTimer=setTimeout(()=>{ if(listening) stop(); }, 90000); };
 $("start").onclick = start;
 
+document.getElementById("ver").textContent = `Page v${APP_VERSION} · ${APP_BUILT}`;
+document.getElementById("ver2").textContent = `v${APP_VERSION}`;
 diag(); render();
 </script>
 </body>
