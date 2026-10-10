@@ -207,9 +207,10 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <div><b class="small">Word pages to practice</b><p class="small muted">Each page has its own grade's words plus the next grade's, like the school list.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
     <div class="row">
       <label class="field">Words per practice round<select id="setLen"><option>10</option><option>15</option><option>20</option></select></label>
+      <label class="field">Reading voice<select id="setVoice"></select></label>
       <label class="field">Voice speed<select id="setRate"><option value="0.75">Slow</option><option value="0.9">Normal</option><option value="1">Quick</option></select></label>
     </div>
-    <button class="primary" id="setSave">Save</button>
+    <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
     <h3>This device</h3>
     <label class="field">Worker URL<input id="setUrl" type="url"></label>
@@ -224,7 +225,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.1";
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -304,15 +305,64 @@ async function pullKid(id){
   if (doc && doc.profile) saveLocal();
 }
 
-/* ================= speech output ================= */
-let voice = null;
+/* ================= speech output =================
+   Google's voice (through the Worker) with each clip saved on the device after its first play;
+   the device's own voice is the fallback when offline or if Google fails. */
+const GOOGLE_VOICES = [["en-US-Chirp3-HD-Kore","Google: Kore (female)"],["en-US-Chirp3-HD-Leda","Google: Leda (female)"],
+                       ["en-US-Chirp3-HD-Charon","Google: Charon (male)"],["en-US-Chirp3-HD-Puck","Google: Puck (male)"],["device","This device's voice"]];
+let devVoice = null;
 function pickVoice(){ const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
-  voice = vs.find(v => /en[-_]US/i.test(v.lang) && /samantha|google|natural|aria|jenny/i.test(v.name)) || vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; }
+  devVoice = vs.find(v => /en[-_]US/i.test(v.lang) && /samantha|google|natural|aria|jenny/i.test(v.name)) || vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; }
 if (window.speechSynthesis){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function say(text, rate){
+function sayDevice(text, rate){
   if (!window.speechSynthesis) return;
-  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (voice) u.voice = voice;
-  u.rate = rate || (doc && doc.profile.rate) || 0.9; speechSynthesis.speak(u);
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (devVoice) u.voice = devVoice;
+  u.rate = rate || 0.9; speechSynthesis.speak(u);
+}
+const player = new Audio(); player.preload = "auto";
+let playerUnlocked = false, ttsFailures = 0, speakSeq = 0;
+// iPads only let a page play sound after a tap: play a silent clip on the first tap so later clips can play on their own
+const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+document.addEventListener("pointerdown", () => { if (playerUnlocked) return; playerUnlocked = true; player.src = SILENT; player.play().catch(()=>{}); }, { once:false, capture:true });
+function stopSpeech(){ speakSeq++; try{ player.pause(); }catch(e){} if (window.speechSynthesis) speechSynthesis.cancel(); }
+const ttsCacheName = "tts-v1";
+async function ttsBlob(text, ssml, voiceName, rate){
+  const q = `t=${encodeURIComponent(text)}&v=${encodeURIComponent(voiceName)}&r=${rate}${ssml ? "&s=1" : ""}`;
+  const key = "https://tts.cache/?" + q;
+  let cache = null; try{ cache = window.caches ? await caches.open(ttsCacheName) : null; }catch(e){}
+  if (cache){ const hit = await cache.match(key).catch(()=>null); if (hit) return hit.blob(); }
+  const r = await fetch(cfg.url + "/tts?" + q, { headers:{ "X-Passcode": cfg.pass } });
+  if (!r.ok){ let m = "HTTP " + r.status; try{ m = (await r.json()).error || m; }catch(e){} throw new Error(m); }
+  const blob = await r.blob();
+  if (cache) cache.put(key, new Response(blob, { headers:{ "Content-Type":"audio/mpeg" } })).catch(()=>{});
+  return blob;
+}
+/* say(text) reads plain text; sayLetters(word) spells it out letter by letter */
+async function speak(text, ssml, plainFallback){
+  const seq = ++speakSeq;
+  const voiceName = (doc && doc.profile.voice) || "en-US-Chirp3-HD-Kore";
+  const rate = (doc && doc.profile.rate) || 0.9;
+  if (voiceName === "device" || !cfg || ttsFailures >= 3){ sayDevice(plainFallback || text, rate); return; }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  try{
+    const blob = await ttsBlob(text, ssml, voiceName, rate);
+    if (seq !== speakSeq) return;                       // something newer was asked for meanwhile
+    const url = URL.createObjectURL(blob);
+    player.src = url; await player.play();
+    player.onended = () => URL.revokeObjectURL(url);
+    ttsFailures = 0;
+  }catch(e){
+    if (seq !== speakSeq) return;
+    ttsFailures++; console.warn("Google voice unavailable, using device voice:", e.message || e);
+    sayDevice(plainFallback || text, rate);
+  }
+}
+const say = text => speak(text, false);
+const xml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
+function sayLetters(prefix, w){
+  const letters = targetForms(w)[0].split("");
+  const ssml = `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`;
+  speak(ssml, true, prefix + " " + letters.join(", ") + ".");
 }
 const spellOut = w => targetForms(w)[0].split("").join(", ");
 
@@ -433,7 +483,7 @@ function cancelListening(msg){ setMic("idle", msg); }
 $("micBtn").onclick = async () => {
   if (micState === "listening"){ finishListening(); return; }
   if (micState !== "idle") return;
-  if (window.speechSynthesis) speechSynthesis.cancel();
+  stopSpeech();
   try{ await recStart(round.mode === "bee" ? beeTick : practiceTick); }
   catch(e){ setMic("idle", "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
   R.checking = false; R.prompted = false;
@@ -527,7 +577,7 @@ function showResult(ok, heard, mode, note){
   $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
   renderDots();
   if (ok) say(v.textContent);
-  else say(`The word ${w} is spelled ${spellOut(w)}.`);
+  else sayLetters(`The word ${w} is spelled`, w);
 }
 function mistakeNote(h, w){
   const k = mistakeKinds(h, w); if (!k.length) return "";
@@ -639,13 +689,15 @@ $("addKid").onclick = async () => {
 function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
+  $("setVoice").innerHTML = GOOGLE_VOICES.map(([v,l]) => `<option value="${v}">${l}</option>`).join("");
+  $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
   show("settings");
 }
 $("setSave").onclick = () => {
   const pages = chipVals($("setPages"));
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
-    len: +$("setLen").value, rate: +$("setRate").value, updatedAt: Date.now() });
+    len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value, updatedAt: Date.now() });
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
@@ -653,6 +705,12 @@ $("setDevSave").onclick = async () => {
   $("setMsg").textContent = "Checking…"; try{ await api("/kids"); $("setMsg").textContent = "Connected ✓"; }catch(e){ $("setMsg").textContent = "Not connected: " + e.message; }
 };
 $("setBack").onclick = () => { show("home"); renderHome(); };
+$("setTest").onclick = () => {          // try the picked voice and speed without saving
+  const keep = { voice: doc.profile.voice, rate: doc.profile.rate };
+  doc.profile.voice = $("setVoice").value; doc.profile.rate = +$("setRate").value; ttsFailures = 0;
+  sayLetters("Your word is pleats. Pleats is spelled", "pleats");
+  doc.profile.voice = keep.voice; doc.profile.rate = keep.rate;
+};
 
 /* ================= setup ================= */
 $("cfgSave").onclick = async () => {
