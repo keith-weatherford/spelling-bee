@@ -539,6 +539,16 @@ let clearArmed=false;
 $("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textContent="Tap again to clear"; setTimeout(()=>{clearArmed=false;$("clear").textContent="Clear results";},3000); return; }
   results=[]; save(); clearArmed=false; $("clear").textContent="Clear results"; render(); };
 
+// Release the mic when this tab is hidden or closed. Otherwise a background tab keeps restarting
+// its listening session and can starve the tab you're actually using.
+function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); render(); }
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
+window.addEventListener("pagehide", releaseMic);
+// Safety: stop auto-restarting after 90 s so a forgotten session can't run forever
+let listenTimer=null;
+const _start = start; start = function(){ _start(); clearTimeout(listenTimer); listenTimer=setTimeout(()=>{ if(listening) stop(); }, 90000); };
+$("start").onclick = start;
+
 diag(); render();
 </script>
 </body>
