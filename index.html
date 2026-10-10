@@ -111,6 +111,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
           <option value="restart">Mode A: short bursts</option>
           <option value="continuous">Mode B: continuous</option>
           <option value="vosk">Mode C: on-device</option>
+          <option value="local">Mode D: letters boosted</option>
         </select>
       </div>
     </div>
@@ -186,7 +187,8 @@ function parseLetters(transcript, target){
   const forms = targetForms(target);
   // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
   const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
-  let toks = norm(expanded).replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
+  const fixed = norm(expanded).replace(/\b(double ?u|double ?you)\b/g, " w ").replace(/\b(will you|dub ?ya)\b/g, " willyou ");
+  let toks = fixed.replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
   // drop the word itself said before/after the letters, as in a real bee
   const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
   if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
@@ -201,6 +203,9 @@ function parseLetters(transcript, target){
       const L = TOKEN2LETTER[nxt] || (nxt.length===1?nxt:null);
       if (L){ pieces.push([L+L]); i++; continue; }
     }
+    // "will you" is usually W, but sometimes it swallowed more letters ("w a v e r"): read it as W, and if that
+    // doesn't give the right spelling, call it unclear rather than wrong
+    if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
     if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
     if (t.length===1){ pieces.push([t]); continue; }
     if (AMBIG[t]){ pieces.push(AMBIG[t]); ambiguous.push(t); continue; }
@@ -276,6 +281,10 @@ async function diag(){
   rows.push(["Secure (HTTPS) page", window.isSecureContext, window.isSecureContext?"Yes":"No: open the https:// link"]);
   const silk = /Silk\//.test(navigator.userAgent);
   rows.push(["Browser speech recognition (Modes A/B)", silk?false:!!SR, silk?"Not usable in Silk: use Mode C":SR?"Present (may still fail)":"No: use Mode C"]);
+  // don't probe on-device availability at load (it can crash browsers without a speech service); Mode D checks when picked
+  const hasLocalApi = !!(SR && (SR.available || SR.availableOnDevice));
+  rows.push(["Chrome on-device + letter boost (Mode D)", hasLocalApi?"wait":false,
+             hasLocalApi ? ("Pick Mode D to check" + (window.SpeechRecognitionPhrase?"":" (no letter boost API)")) : "Not in this Chrome"]);
   rows.push(["On-device recognition (Mode C)", !!(window.WebAssembly && window.Worker && navigator.mediaDevices && window.indexedDB), (window.WebAssembly && navigator.mediaDevices)?"Supported":"Not supported"]);
   rows.push(["Text-to-speech voice", "speechSynthesis" in window, ("speechSynthesis" in window)?"Yes":"No"]);
   let mic = "wait", micTxt = "Asked when you tap Start";
@@ -298,8 +307,33 @@ function say(text){
 }
 
 /* ---------- Speech in ---------- */
-function makeRec(continuous){
+/* Mode D: Chrome's on-device recognizer with "contextual biasing" toward letter names (newer Chrome only) */
+const LOCAL_OPTS = { langs:["en-US"], processLocally:true };
+let noPhrases = false, rebuild = false;
+function letterPhrases(){
+  if (noPhrases || !window.SpeechRecognitionPhrase) return null;
+  return "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(L => new SpeechRecognitionPhrase(L, 8.0));
+}
+async function localStatus(){
+  try{
+    if (SR && SR.available) return await SR.available(LOCAL_OPTS);
+    if (SR && SR.availableOnDevice) return await SR.availableOnDevice("en-US");
+  }catch(e){ return "error: "+(e.message||e); }
+  return "not in this Chrome";
+}
+async function ensureLocal(){
+  let s = await localStatus();
+  if (s==="downloadable" || s==="downloading"){
+    voskStatus("Downloading Chrome's on-device speech pack…", "wait");
+    try{ if (SR.install) await SR.install(LOCAL_OPTS); else if (SR.installOnDevice) await SR.installOnDevice("en-US"); }catch(e){}
+    s = await localStatus();
+  }
+  voskStatus(s==="available" ? ("On-device ready" + (window.SpeechRecognitionPhrase&&!noPhrases ? ", letter boost on" : ", letter boost not supported")) : "On-device not available: "+s, s==="available"?"ok":"no");
+  return s==="available";
+}
+function makeRec(continuous, local){
   const r = new SR(); r.lang="en-US"; r.interimResults=true; r.maxAlternatives=5; r.continuous=continuous;
+  if (local){ try{ r.processLocally = true; const ph = letterPhrases(); if (ph) r.phrases = ph; }catch(e){ noPhrases = true; } }
   r.onresult = e => {
     if (continuous){
       // rebuild from the full result list; collapse Android's cumulative duplicates
@@ -321,8 +355,16 @@ function makeRec(continuous){
     }
     render();
   };
-  r.onerror = e => { lastError = e.error; if(e.error==="not-allowed"||e.error==="service-not-allowed"){ listening=false; } render(); diag(); };
-  r.onend = () => { if(listening){ baseSegments = segments.slice(); try{ r.start(); }catch(err){} } else render(); };
+  r.onerror = e => {
+    lastError = e.error;
+    if (e.error==="phrases-not-supported"){ noPhrases = true; rebuild = true; voskStatus("Letter boost not supported here; listening without it", "wait"); return; }
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported"){ listening=false; }
+    render(); diag(); };
+  r.onend = () => {
+    if(!listening){ render(); return; }
+    baseSegments = segments.slice();
+    if (rebuild){ rebuild=false; rec = makeRec(continuous, local); try{ rec.start(); }catch(err){} return; }
+    try{ r.start(); }catch(err){} };
   return r;
 }
 let baseSegments = []; let lastError = "";
@@ -388,7 +430,15 @@ function start(){
   segments=[]; baseSegments=[]; interim=""; lastError=""; current=null; V.confs=[];
   listening=true; $("truth").hidden=true; $("verdict").hidden=true;
   if (mode==="vosk"){ startVosk(); render(); return; }
-  rec = makeRec(mode==="continuous");
+  if (mode==="local"){
+    render();
+    ensureLocal().then(ok => {
+      if (!ok){ listening=false; render(); return; }
+      rec = makeRec(false, true); try{ rec.start(); }catch(e){ lastError=String(e); } render();
+    });
+    return;
+  }
+  rec = makeRec(mode==="continuous", false);
   try{ rec.start(); }catch(e){ lastError=String(e); }
   render();
 }
@@ -417,7 +467,7 @@ function render(){
   $("start").classList.toggle("listening", listening);
   $("startlbl").textContent = listening ? "Listening…" : "Start spelling";
   $("start").disabled = listening || ($("mode").value!=="vosk" && !SR);
-  $("voskbox").hidden = $("mode").value!=="vosk"; $("done").disabled = !listening;
+  $("voskbox").hidden = !["vosk","local"].includes($("mode").value); $("done").disabled = !listening;
   const live = parseLetters(heardText(), w).letters;
   const tiles = $("tiles"); tiles.innerHTML="";
   const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
@@ -465,7 +515,7 @@ $("skip").onclick = next;
 $("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
 $("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
 $("showword").onchange = render;
-$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); render(); };
+$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if($("mode").value==="local") ensureLocal(); render(); };
 if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
 $("copy").onclick = async () => {
   const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
