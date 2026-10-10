@@ -222,6 +222,7 @@ function parseLetters(transcript, target){
 /* correct | unsure (only an ambiguous reading matches) | unclear (recognizer heard words, not letters) | wrong */
 function isSubseq(a, b){ let i=0; for (const ch of b){ if (ch===a[i]) i++; } return i===a.length; }
 function verdictFor(p, target, segCount=1){
+  if (!p.letters) return "unclear"; // nothing heard
   if (isCorrect(p.letters, target)) return "correct";
   if (p.alts.some(a=>isCorrect(a, target))) return "unsure";
   // listening restarted mid-word and letters are only missing (never wrong): likely lost in the restart gap
@@ -341,6 +342,7 @@ function makeRec(continuous, local){
       for (let i=0;i<e.results.length;i++){
         const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
         if(res.isFinal){
+          if(!alts[0]) continue; // Android sends empty finals around restarts
           const prev=fin[fin.length-1];
           if(prev && alts[0].startsWith(prev[0])) fin[fin.length-1]=alts; else fin.push(alts);
         } else inter += " "+alts[0];
@@ -350,7 +352,7 @@ function makeRec(continuous, local){
       interim="";
       for (let i=e.resultIndex;i<e.results.length;i++){
         const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
-        if(res.isFinal) segments.push(alts); else interim += " "+alts[0];
+        if(res.isFinal){ if(alts[0]) segments.push(alts); } else interim += " "+alts[0];
       }
     }
     render();
@@ -361,7 +363,9 @@ function makeRec(continuous, local){
     if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported"){ listening=false; }
     render(); diag(); };
   r.onend = () => {
-    if(!listening){ render(); return; }
+    // Android sometimes ends a session without finalizing the last words: keep them instead of dropping them
+    if (interim.trim()){ segments.push([interim.trim()]); interim=""; }
+    if(!listening){ finishOnce(); return; }
     baseSegments = segments.slice();
     if (rebuild){ rebuild=false; rec = makeRec(continuous, local); try{ rec.start(); }catch(err){} return; }
     try{ r.start(); }catch(err){} };
@@ -445,10 +449,13 @@ function start(){
 function stop(){
   listening=false;
   if ($("mode").value==="vosk"){ render(); stopVosk(); return; }
+  finished = false;
   try{ rec && rec.stop(); }catch(e){}
-  // give the recognizer a moment to deliver its last final result
-  setTimeout(finish, 700);
+  // finish when the recognizer reports it has ended (last results delivered), or after 1.5 s at most
+  setTimeout(finishOnce, 1500);
 }
+let finished = true;
+function finishOnce(){ if (finished) return; finished = true; if (interim.trim()){ segments.push([interim.trim()]); interim=""; } finish(); }
 function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+interim):""); }
 function finish(){
   const w = word(); const top = segments.map(s=>s[0]).join(" ");
@@ -479,7 +486,8 @@ function render(){
     v.className="verdict "+(vd==="correct"?"ok":(vd==="unsure"||vd==="unclear")?"wait":"no");
     v.textContent = vd==="correct" ? "App says: correct" + (current.merged?" (recognizer joined letters into a word, so double-check)":"")
       : vd==="unsure" ? `App isn't sure. Google wrote “${(current.ambiguous||[]).join("”, “")}”, which could be read more than one way. The full app would ask your kid to repeat that letter.`
-      : vd==="unclear" ? ((current.mergedWords||[]).length
+      : vd==="unclear" ? (!current.heard ? "Didn't catch any letters. Tap Mic mess-up / redo and try again."
+        : (current.mergedWords||[]).length
           ? `Couldn't hear the letters clearly. Google heard “${current.mergedWords.join("”, “")}”, a word instead of letters. The full app would ask your kid to spell it again.`
           : `Some letters were missed while the mic restarted between pauses. The full app would ask your kid to spell it again.`)
       : `App says: incorrect. The word is “${w}”.` + (current.merged?" (recognizer joined letters into a word)":"");
