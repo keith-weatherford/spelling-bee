@@ -341,8 +341,32 @@ function findRestarts(words){
   }
   return hits;
 }
+/* Google sometimes glues the spoken word onto the letters ("pleatspleats" = p-l-e-a-t-s + "pleats").
+   Split such tokens back apart; the spoken-word piece gets a short slice of the token's time. */
+function splitGlued(words, target){
+  const forms = targetForms(target).filter(f=>f.length>=3), out=[];
+  for (const x of words){
+    let t = clean(x.w), s = x.s, e = x.e, pieces = [];
+    let guard = 0;
+    while (t && guard++ < 4){
+      // the leftover must be about word-length (the spelled letters), so "younwavering" isn't split into "yo"+"unwavering"
+      const f = forms.find(f => t.endsWith(f) && t.length - f.length >= Math.max(2, f.length - 2));
+      if (!f) break;
+      const rest = t.slice(0, t.length - f.length);
+      let cut = null;
+      if (s!=null && e!=null){ const dur=e-s; cut = e - Math.min(0.9, 0.4*dur); }
+      pieces.unshift({w:f, s:cut, e:e}); t = rest; e = cut;
+    }
+    if (pieces.length){ const f2 = forms.find(f => t.startsWith(f) && t.length - f.length >= Math.max(2, f.length - 2));
+      if (f2){ let cut = (s!=null && e!=null) ? s + Math.min(0.9, 0.4*(e-s)) : null; out.push({w:f2, s, e:cut}); t = t.slice(f2.length); s = cut; }
+      if (t) out.push({w:t, s, e}); out.push(...pieces); }
+    else out.push(x);
+  }
+  return out;
+}
 /* lock-in check on the plain pass alone (used while still recording) */
 function isLockedIn(plainWords, target){
+  plainWords = splitGlued(plainWords, target);
   const hits = findWordHits(plainWords, target); if (!hits.length) return false;
   const last = hits[hits.length-1];
   const fillers = new Set(["um","uh","er","okay","ok"]);
@@ -352,11 +376,13 @@ function isLockedIn(plainWords, target){
   const startIdx = (hits.length>1 && hits[0].i<=1) ? hits[0].j : 0;
   const lastRestart = restarts.filter(r=>r.j<=last.i).pop();
   const from = Math.max(startIdx, lastRestart ? lastRestart.j : 0);
-  return (last.i - from) >= 2; // some spelling between the opening (or last restart) and the closing word
+  if ((last.i - from) >= 2) return true;   // some spelling between the opening (or last restart) and the closing word
+  // or Google heard the spelled letters as the word itself: word, word, word
+  return hits.length >= 3 && hits[0].i <= 1 && !(lastRestart && lastRestart.j > hits[hits.length-2].i);
 }
 /* full analysis once recording ends */
 function analyzeBee(plainResults, letterResults, target, strict){
-  const plain = wordsOf(plainResults), letters = wordsOf(letterResults);
+  const plain = splitGlued(wordsOf(plainResults), target), letters = splitGlued(wordsOf(letterResults), target);
   const hits = findWordHits(plain, target), restarts = findRestarts(plain);
   const firstLetterIdx = 0;
   const opening = hits.length && hits[0].i <= 1 && !(hits.length===1 && hits[0].j>=plain.length && plain.length>2) ? hits[0] : null;
