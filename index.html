@@ -90,6 +90,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
       <li>On a Fire tablet (Silk), use <b>Mode C</b>. It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
       <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
       <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
+      <li>Coach your kid to leave a short pause between letters. When letters run together, Google tends to hear a word (like “Angie”) instead.</li>
       <li>Tap what your kid <i>actually</i> said: <b>Spelled it right</b> or <b>Spelled it wrong</b>. That's the answer key the app is graded against.</li>
       <li>On 3 of the 10 words, have your kid misspell the word on purpose (swap b/d, drop a double letter). This checks that the app catches mistakes.</li>
       <li>When you're done, tap <b>Copy results</b> and paste them into the chat with Claude.</li>
@@ -183,12 +184,14 @@ const AMBIG = { in:["n","in"], an:["n","an"], inn:["n","in"], and:["n",""], end:
    merged = a multi-letter word had to be split (recognizer may have auto-corrected the spelling). */
 function parseLetters(transcript, target){
   const forms = targetForms(target);
-  let toks = norm(transcript).replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
+  // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
+  const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
+  let toks = norm(expanded).replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
   // drop the word itself said before/after the letters, as in a real bee
   const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
   if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
   if (toks.length > 1 && isWord(toks[toks.length-1])) toks = toks.slice(0,-1);
-  const pieces = []; let merged = false; const ambiguous = [];
+  const pieces = []; let merged = false; const ambiguous = []; const mergedWords = [];
   for (let i=0;i<toks.length;i++){
     const t = toks[i].replace(/'s$/,"").replace(/'/g,"");
     if (!t) continue;
@@ -203,18 +206,23 @@ function parseLetters(transcript, target){
     if (AMBIG[t]){ pieces.push(AMBIG[t]); ambiguous.push(t); continue; }
     if (TOKEN2LETTER[t]){ pieces.push([TOKEN2LETTER[t]]); continue; }
     // recognizer joined letters into a word (e.g. "tiptoe") — split it, flag lower confidence
-    merged = true; pieces.push([t]);
+    merged = true; mergedWords.push(t); pieces.push([t]);
   }
   const letters = pieces.map(p=>p[0]).join("");
   let combos = [""];
   for (const p of pieces){ const n=[]; for (const c of combos) for (const o of p){ if(n.length<256) n.push(c+o); } combos=n; }
   const alts = [...new Set(combos)].filter(c=>c!==letters);
-  return {letters, merged, alts, ambiguous};
+  return {letters, merged, alts, ambiguous, mergedWords};
 }
-/* correct | unsure (only an ambiguous reading matches: app would ask to repeat) | wrong */
-function verdictFor(p, target){
+/* correct | unsure (only an ambiguous reading matches) | unclear (recognizer heard words, not letters) | wrong */
+function isSubseq(a, b){ let i=0; for (const ch of b){ if (ch===a[i]) i++; } return i===a.length; }
+function verdictFor(p, target, segCount=1){
   if (isCorrect(p.letters, target)) return "correct";
   if (p.alts.some(a=>isCorrect(a, target))) return "unsure";
+  // listening restarted mid-word and letters are only missing (never wrong): likely lost in the restart gap
+  if (segCount > 1 && p.letters.length < targetForms(target)[0].length && targetForms(target).some(f=>isSubseq(p.letters, f))) return "unclear";
+  // recognizer turned letters into a real word ("a v e r i n g" -> "Angie"): a hearing problem, not a spelling miss
+  if (p.mergedWords.length) return "unclear";
   return "wrong";
 }
 function isCorrect(letters, target){ return targetForms(target).includes(letters); }
@@ -242,7 +250,7 @@ function anyAltCorrect(segments, target){
   }
   return combos.some(c=>isCorrect(parseLetters(c,target).letters,target));
 }
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isCorrect,align,anyAltCorrect,targetForms};
+if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms};
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
@@ -396,7 +404,7 @@ function finish(){
   const w = word(); const top = segments.map(s=>s[0]).join(" ");
   const p = parseLetters(top, w);
   current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
-              verdict:verdictFor(p,w), ambiguous:p.ambiguous, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
+              verdict:verdictFor(p,w,segments.length), ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
               mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
   render();
 }
@@ -418,9 +426,12 @@ function render(){
   if (current){
     const v=$("verdict"); v.hidden=false;
     const vd=current.verdict;
-    v.className="verdict "+(vd==="correct"?"ok":vd==="unsure"?"wait":"no");
+    v.className="verdict "+(vd==="correct"?"ok":(vd==="unsure"||vd==="unclear")?"wait":"no");
     v.textContent = vd==="correct" ? "App says: correct" + (current.merged?" (recognizer joined letters into a word, so double-check)":"")
       : vd==="unsure" ? `App isn't sure. Google wrote “${(current.ambiguous||[]).join("”, “")}”, which could be read more than one way. The full app would ask your kid to repeat that letter.`
+      : vd==="unclear" ? ((current.mergedWords||[]).length
+          ? `Couldn't hear the letters clearly. Google heard “${current.mergedWords.join("”, “")}”, a word instead of letters. The full app would ask your kid to spell it again.`
+          : `Some letters were missed while the mic restarted between pauses. The full app would ask your kid to spell it again.`)
       : `App says: incorrect. The word is “${w}”.` + (current.merged?" (recognizer joined letters into a word)":"");
     $("truth").hidden=false;
   }
@@ -430,7 +441,7 @@ function renderLog(){
   const tb=$("log").querySelector("tbody"); tb.innerHTML="";
   results.forEach((r,i)=>{
     const tr=document.createElement("tr");
-    [i+1, r.word, r.heard||"—", r.verdict==="unsure"?"?":r.strict?"✓":"✗", r.truth==="right"?"Right":"Wrong"].forEach(v=>{const td=document.createElement("td"); td.textContent=v; tr.append(td);});
+    [i+1, r.word, r.heard||"—", (r.verdict==="unsure"||r.verdict==="unclear")?"?":r.strict?"✓":"✗", r.truth==="right"?"Right":"Wrong"].forEach(v=>{const td=document.createElement("td"); td.textContent=v; tr.append(td);});
     tb.append(tr);
   });
   const n=results.length;
@@ -439,7 +450,7 @@ function renderLog(){
   const falseReject=results.filter(r=>!r.strict && r.truth==="right").length;
   const lenAgree=results.filter(r=>r.lenient===(r.truth==="right")).length;
   const S=$("stats"); S.innerHTML="";
-  [["Words tested",n],["App agreed with you",n?Math.round(100*agree/n)+"%":"—"],["Wrong spelling marked right",falseAccept],["Right spelling marked wrong",falseReject],["Agreement, lenient scoring",n?Math.round(100*lenAgree/n)+"%":"—"],["Unsure, would ask to repeat",results.filter(r=>r.verdict==="unsure").length]]
+  [["Words tested",n],["App agreed with you",n?Math.round(100*agree/n)+"%":"—"],["Wrong spelling marked right",falseAccept],["Right spelling marked wrong",falseReject],["Agreement, lenient scoring",n?Math.round(100*lenAgree/n)+"%":"—"],["Unsure or unclear, would ask to repeat",results.filter(r=>r.verdict==="unsure"||r.verdict==="unclear").length]]
     .forEach(([k,v])=>{const d=document.createElement("div"); d.className="stat"; const b=document.createElement("b"); b.textContent=v; d.append(b, document.createTextNode(k)); S.append(d);});
 }
 
