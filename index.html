@@ -544,7 +544,7 @@ function finish(){
   const w = word(); const top = segments.map(s=>s[0]).join(" ");
   const p = parseLetters(top, w, {joined: $("mode").value==="cloud"});
   current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
-              verdict:verdictFor(p,w,segments.length), ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
+              verdict:verdictFor(p,w, $("mode").value==="cloud" ? 1 : segments.length), // Mode E records one continuous clip: no restarts ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
               mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
   render();
 }
@@ -580,7 +580,7 @@ function render(){
         : (current.mergedWords||[]).length
           ? `Couldn't hear the letters clearly. Google heard “${current.mergedWords.join("”, “")}”, a word instead of letters. The full app would ask your kid to spell it again.`
           : `Some letters were missed while the mic restarted between pauses. The full app would ask your kid to spell it again.`)
-      : `App says: incorrect. The word is “${w}”.` + (current.merged?" (recognizer joined letters into a word)":"");
+      : `App says: incorrect. The word is “${w}”.` + (current.merged && current.mode!=="cloud"?" (recognizer joined letters into a word)":"");
     $("truth").hidden=false;
   }
   renderLog();
