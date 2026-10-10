@@ -55,6 +55,7 @@ select,input{border:1px solid var(--line);background:var(--bg);border-radius:10p
 .mic{display:inline-flex;align-items:center;gap:8px}
 .dot{width:12px;height:12px;border-radius:50%;background:var(--muted)}
 .listening .dot{background:var(--bad);animation:pulse 1s infinite}
+.listening.paused .dot{background:var(--honey);animation:none}
 @keyframes pulse{50%{opacity:.3}}
 @media (prefers-reduced-motion:reduce){.listening .dot{animation:none}}
 .verdict{font-weight:700;padding:10px 12px;border-radius:10px}
@@ -91,6 +92,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
       <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
       <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
       <li>Coach your kid to leave a short pause between letters. When letters run together, Google tends to hear a word (like “Angie”) instead.</li>
+      <li>After a longer pause the mic restarts. The dot on the button turns amber (“Wait for red…”). Keep spelling once it's red again, or letters get lost.</li>
       <li>Tap what your kid <i>actually</i> said: <b>Spelled it right</b> or <b>Spelled it wrong</b>. That's the answer key the app is graded against.</li>
       <li>On 3 of the 10 words, have your kid misspell the word on purpose (swap b/d, drop a double letter). This checks that the app catches mistakes.</li>
       <li>When you're done, tap <b>Copy results</b> and paste them into the chat with Claude.</li>
@@ -109,9 +111,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
         <label for="mode" style="position:absolute;left:-9999px">Listening mode</label>
         <select id="mode" title="Listening mode">
           <option value="restart">Mode A: short bursts</option>
-          <option value="continuous">Mode B: continuous</option>
           <option value="vosk">Mode C: on-device</option>
-          <option value="local">Mode D: letters boosted</option>
         </select>
       </div>
     </div>
@@ -335,6 +335,7 @@ async function ensureLocal(){
 function makeRec(continuous, local){
   const r = new SR(); r.lang="en-US"; r.interimResults=true; r.maxAlternatives=5; r.continuous=continuous;
   if (local){ try{ r.processLocally = true; const ph = letterPhrases(); if (ph) r.phrases = ph; }catch(e){ noPhrases = true; } }
+  r.onaudiostart = () => { micLive = true; render(); };
   r.onresult = e => {
     if (continuous){
       // rebuild from the full result list; collapse Android's cumulative duplicates
@@ -363,6 +364,7 @@ function makeRec(continuous, local){
     if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported"){ listening=false; }
     render(); diag(); };
   r.onend = () => {
+    micLive = false;
     // Android sometimes ends a session without finalizing the last words: keep them instead of dropping them
     if (interim.trim()){ segments.push([interim.trim()]); interim=""; }
     if(!listening){ finishOnce(); return; }
@@ -454,7 +456,7 @@ function stop(){
   // finish when the recognizer reports it has ended (last results delivered), or after 1.5 s at most
   setTimeout(finishOnce, 1500);
 }
-let finished = true;
+let finished = true; let micLive = false;
 function finishOnce(){ if (finished) return; finished = true; if (interim.trim()){ segments.push([interim.trim()]); interim=""; } finish(); }
 function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+interim):""); }
 function finish(){
@@ -471,8 +473,11 @@ function render(){
   const w = word();
   $("progress").textContent = `Word ${idx+1} of ${words().length}`;
   $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
+  // Mode A restarts the mic after each pause; show the kid when it's safe to keep going
+  const micOn = micLive || $("mode").value==="vosk";
   $("start").classList.toggle("listening", listening);
-  $("startlbl").textContent = listening ? "Listening…" : "Start spelling";
+  $("start").classList.toggle("paused", listening && !micOn);
+  $("startlbl").textContent = !listening ? "Start spelling" : micOn ? "Listening, keep going" : "Wait for red…";
   $("start").disabled = listening || ($("mode").value!=="vosk" && !SR);
   $("voskbox").hidden = !["vosk","local"].includes($("mode").value); $("done").disabled = !listening;
   const live = parseLetters(heardText(), w).letters;
