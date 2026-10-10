@@ -102,6 +102,19 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 .celebrate{animation:pop .5s ease-out}
 @keyframes pop{0%{transform:scale(.9)}60%{transform:scale(1.04)}100%{transform:scale(1)}}
 @media (prefers-reduced-motion:reduce){.celebrate{animation:none}}
+.study{display:grid;gap:8px;border:1px dashed var(--line);border-radius:12px;padding:12px 14px}
+.study dt{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.study dd{margin:0 0 4px}
+.study .syl{font:700 1.4rem/1.2 var(--display);letter-spacing:.03em}
+.sheet{display:grid;gap:14px}
+.sheet .item{border-bottom:1px solid var(--line);padding-bottom:10px;display:grid;gap:4px}
+.sheet .lines{display:flex;gap:10px;flex-wrap:wrap}
+.sheet .lines i{flex:1;min-width:120px;border-bottom:1.5px solid var(--muted);height:28px;display:block}
+@media print{
+  body{background:#fff;color:#000;padding:0} .top,#v-home,#v-play,#v-settings,#v-kids,#v-setup,.noprint{display:none!important}
+  #v-stats{border:none;padding:0} #v-stats > *:not(#statsBody){display:none!important} #statsBody > *:not(.sheetwrap){display:none!important}
+  .sheet .item{break-inside:avoid}
+}
 .sr{position:absolute;left:-9999px}
 </style>
 </head>
@@ -163,6 +176,8 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <button id="askDef">Definition</button>
       <button id="askSent">Use it in a sentence</button>
       <button id="askPos">Part of speech</button>
+      <button id="askOrigin">Word origin</button>
+      <button id="askSlow">Say it slowly</button>
     </div>
     <div id="spellArea" style="display:grid;gap:10px">
       <button class="mic primary" id="micBtn"><span class="dot"></span><span id="micLbl">Tap and spell</span></button>
@@ -180,6 +195,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <div><span class="small muted">What we heard</span><div class="tiles" id="tiles"></div></div>
       <div><span class="small muted">Correct spelling</span><div class="answer" id="answer"></div></div>
       <p class="small muted" id="detail"></p>
+      <div class="study" id="study"></div>
       <div class="row">
         <button class="primary" id="nextBtn">Next word</button>
         <button id="redoBtn">That's not what I said</button>
@@ -225,7 +241,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -365,6 +381,13 @@ function sayLetters(prefix, w){
   speak(ssml, true, prefix + " " + letters.join(", ") + ".");
 }
 const spellOut = w => targetForms(w)[0].split("").join(", ");
+/* "say it slowly": each syllable with a pause, so the word can be heard in chunks */
+function sayChunks(entry){
+  const parts = String(entry.syl || entry.w).split("·");
+  if (parts.length < 2){ speak(`<speak><prosody rate="slow">${xml(entry.w)}</prosody></speak>`, true, entry.w); return; }
+  const ssml = "<speak>" + parts.map(p => `<prosody rate="slow">${xml(p)}</prosody>`).join('<break time="450ms"/>') + `<break time="700ms"/>${xml(entry.w)}</speak>`;
+  speak(ssml, true, parts.join(", ") + ". " + entry.w);
+}
 
 /* ================= microphone: raw samples + silence detection ================= */
 const R = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, lastSpeech:0, heard:false, floor:1, startedAt:0, onTick:null, buf:null };
@@ -442,6 +465,7 @@ function startRound(mode){
     ? "Say the word, spell it, then say the word again to lock it in. You may say “can I start over”, but the letters you already said can't change."
     : "Spell the word out loud, one letter at a time. It checks when you stop talking, or tap Done.";
   $("restartBtn").hidden = true; $("typeToggle").hidden = mode === "bee"; $("typeBox").hidden = true;
+  $("askSlow").hidden = mode === "bee";   // a real bee pronouncer doesn't break the word into syllables
   show("play"); nextWord();
 }
 function alertHome(msg){ show("home"); renderHome(); $("practiceSub").textContent = msg; }
@@ -467,6 +491,8 @@ $("askWord").onclick = () => say(round.current.w);
 $("askDef").onclick = () => say(round.current.def);
 $("askSent").onclick = () => say(round.current.sent);
 $("askPos").onclick = () => say(round.current.pos);
+$("askOrigin").onclick = () => say(round.current.parts || "Sorry, I don't have the origin for this word.");
+$("askSlow").onclick = () => sayChunks(round.current);
 
 /* ---- mic button states ---- */
 let micState = "idle";
@@ -574,6 +600,15 @@ function showResult(ok, heard, mode, note){
   $("answer").innerHTML = marks.join("")
     + (forms.length > 1 ? ` <span class="small muted">or ${esc(forms[1])}</span>` : "");
   $("detail").textContent = (note ? note + " " : "") + (ok ? "" : mistakeNote(heard, w));
+  // study aids are shown only after answering, because they give the spelling away
+  const cw = round.current;
+  $("study").innerHTML = `<dl style="margin:0">
+    <dt>Syllables</dt><dd class="syl">${esc(cw.syl || cw.w)}</dd>
+    ${cw.parts ? `<dt>Word parts &amp; origin</dt><dd>${esc(cw.parts)}</dd>` : ""}
+    ${cw.trick ? `<dt>Memory trick</dt><dd>${esc(cw.trick)}</dd>` : ""}</dl>
+    <div class="row"><button id="hearSlow">🔊 Say it slowly</button>${cw.trick ? '<button id="hearTrick">🔊 Hear the trick</button>' : ""}</div>`;
+  $("hearSlow").onclick = () => sayChunks(cw);
+  if ($("hearTrick")) $("hearTrick").onclick = () => say(cw.trick.replace(/\b([A-Z]{2,})\b/g, m => m.split("").join(" ")));
   $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
   renderDots();
   if (ok) say(v.textContent);
@@ -760,6 +795,13 @@ function renderStats(){
   html += `<div><h3>Words spelled per day (last 14 days)</h3><div class="spark" style="margin-top:8px">${counts.map(c => `<i style="height:${100*c/mx}%" title="${c}"></i>`).join("")}</div><p class="small muted">Most in a day: ${Math.max(...counts)}</p></div>`;
   // trouble words
   const trouble = [...st.entries()].filter(([,s]) => s.miss).sort((a,b) => (b[1].miss - b[1].ok*0.5) - (a[1].miss - a[1].ok*0.5)).slice(0, 15);
+  // printable study sheet: the trouble words with syllables, memory trick, and lines to write each one 3 times
+  if (trouble.length) html += `<div class="sheetwrap"><div class="row between"><h3>Study sheet</h3><button class="noprint" onclick="window.print()">Print study sheet</button></div>
+    <p class="small muted">Look, say, cover, write, check: read the word and its trick, cover it, write it from memory, then check.</p>
+    <div class="sheet">` + trouble.slice(0, 10).map(([w]) => { const e = WORD_BY.get(w) || { w };
+      return `<div class="item"><div><b style="font:700 1.3rem var(--display)">${esc(e.syl || w)}</b> <span class="small muted">${esc(e.pos || "")}</span></div>
+        ${e.def ? `<div class="small">${esc(e.def)}</div>` : ""}${e.trick ? `<div class="small"><b>Trick:</b> ${esc(e.trick)}</div>` : ""}
+        <div class="lines"><i></i><i></i><i></i></div></div>`; }).join("") + `</div></div>`;
   html += `<div><h3>Trouble words</h3>` + (trouble.length ? `<div class="tablewrap"><table><thead><tr><th>Word</th><th>Right</th><th>Missed</th><th>Last wrong spelling</th><th>Now</th></tr></thead><tbody>` +
     trouble.map(([w,s]) => `<tr><td><b>${esc(w)}</b></td><td>${s.ok}</td><td>${s.miss}</td><td>${esc(s.wrong[s.wrong.length-1]||"")}</td><td>${s.box >= MASTERED ? "mastered" : s.streak ? s.streak + " right in a row" : "keep practicing"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="muted">No misses yet.</p>`) + `</div>`;
   // mistake types
