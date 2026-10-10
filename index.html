@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Spelling Mic Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: one narrow column, a "test card" for the current word, results log below. Built for a phone/tablet held by a parent. */
+:root{
+  --bg:#f7f6f1; --surface:#ffffff; --ink:#1d2433; --muted:#5d6577; --line:#dcdad0;
+  --honey:#c98a00; --honey-soft:#fbefcc; --good:#1f7a4a; --good-soft:#dcf1e4; --bad:#b3261e; --bad-soft:#f9dedb;
+  --display:"Andika","Atkinson Hyperlegible",system-ui,sans-serif;
+  --body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14171f; --surface:#1d2230; --ink:#eceae2; --muted:#a4abba; --line:#323a4c;
+  --honey:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
+  color-scheme:dark;}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body);padding:env(safe-area-inset-top,0px) 16px calc(env(safe-area-inset-bottom,0px) + 32px)}
+main{max-width:640px;margin:0 auto;display:grid;gap:20px;padding-block:20px}
+h1{font:700 1.6rem/1.2 var(--display);margin:0;text-wrap:balance}
+h2{font:700 1.05rem/1.3 var(--body);margin:0}
+p{margin:0}
+.muted{color:var(--muted)}
+.small{font-size:.875rem}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px}
+.diag{display:grid;gap:6px;font-size:.9rem}
+.diag div{display:flex;justify-content:space-between;gap:12px}
+.pill{font-size:.8rem;font-weight:700;padding:2px 10px;border-radius:999px;white-space:nowrap}
+.ok{background:var(--good-soft);color:var(--good)} .no{background:var(--bad-soft);color:var(--bad)} .wait{background:var(--honey-soft);color:var(--honey)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;min-height:48px}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--honey);outline-offset:2px}
+button.primary{background:var(--honey);border-color:var(--honey);color:#1d2433}
+button.good{background:var(--good-soft);border-color:var(--good);color:var(--good)}
+button.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+button:disabled{opacity:.45;cursor:default}
+select,input{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 12px;min-height:48px}
+.word{font:700 clamp(2rem,9vw,3rem)/1.1 var(--display);letter-spacing:.02em;overflow-wrap:anywhere}
+.word.hidden{color:transparent;text-shadow:0 0 18px var(--muted);user-select:none}
+.tiles{display:flex;flex-wrap:wrap;gap:6px;min-height:52px}
+.tile{font:700 1.5rem/1 var(--display);width:42px;height:48px;display:grid;place-items:center;border-radius:8px;border:2px solid var(--line);background:var(--bg);text-transform:lowercase}
+.tile.m{border-color:var(--good);background:var(--good-soft);color:var(--good)}
+.tile.x{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
+.tile.gap{border-style:dashed;border-color:var(--bad);color:var(--bad);background:transparent}
+.label{font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.mic{display:inline-flex;align-items:center;gap:8px}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--muted)}
+.listening .dot{background:var(--bad);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.listening .dot{animation:none}}
+.verdict{font-weight:700;padding:10px 12px;border-radius:10px}
+.raw{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.85rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:10px;padding:10px}
+.stat b{display:block;font:700 1.4rem/1.2 var(--display)}
+ol{margin:0;padding-left:1.2em;display:grid;gap:4px}
+textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);padding:8px}
+</style>
+</head>
+<body>
+<main>
+  <header style="display:grid;gap:6px">
+    <h1>Spelling Mic Test</h1>
+    <p class="muted">A 10-word check of whether this device can hear your kids spell letter by letter. Run it once with each kid on their own tablet before we build the full app.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="h-diag">
+    <h2 id="h-diag">Device check</h2>
+    <div class="diag" id="diag"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-how">
+    <h2 id="h-how">How to run it</h2>
+    <ol class="small">
+      <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
+      <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
+      <li>Tap what your kid <i>actually</i> said: <b>Spelled it right</b> or <b>Spelled it wrong</b>. That's the answer key the app is graded against.</li>
+      <li>On 3 of the 10 words, have your kid misspell the word on purpose (swap b/d, drop a double letter). This checks that the app catches mistakes.</li>
+      <li>When you're done, tap <b>Copy results</b> and paste them into the chat with Claude.</li>
+    </ol>
+  </section>
+
+  <section class="panel" aria-labelledby="h-test">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="h-test">Test</h2>
+      <div class="row">
+        <label class="sr" for="set" style="position:absolute;left:-9999px">Word set</label>
+        <select id="set">
+          <option value="g2">2nd-grade page</option>
+          <option value="g4">4th-grade page</option>
+        </select>
+        <label for="mode" style="position:absolute;left:-9999px">Listening mode</label>
+        <select id="mode" title="Listening mode">
+          <option value="restart">Mode A: short bursts</option>
+          <option value="continuous">Mode B: continuous</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="justify-content:space-between">
+      <span class="label" id="progress">Word 1 of 10</span>
+      <label class="row small"><input type="checkbox" id="showword" style="min-height:auto"> Show the word</label>
+    </div>
+    <div class="word hidden" id="word">tiptoe</div>
+    <div class="row">
+      <button id="hear">Hear word</button>
+      <button id="start" class="primary"><span class="mic"><span class="dot"></span><span id="startlbl">Start spelling</span></span></button>
+      <button id="done" disabled>Done</button>
+    </div>
+    <div>
+      <span class="label">Letters heard</span>
+      <div class="tiles" id="tiles" aria-live="polite"></div>
+      <p class="raw" id="raw"></p>
+    </div>
+    <div id="verdict" hidden></div>
+    <div id="truth" class="row" hidden>
+      <button class="good" id="tRight">Spelled it right</button>
+      <button class="bad" id="tWrong">Spelled it wrong</button>
+      <button id="tMic">Mic mess-up / redo</button>
+    </div>
+    <div class="row">
+      <button id="prev">Back</button>
+      <button id="skip">Skip word</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-res">
+    <h2 id="h-res">Results</h2>
+    <div class="stats" id="stats"></div>
+    <div class="tablewrap"><table id="log"><thead><tr><th>#</th><th>Word</th><th>Heard</th><th>App said</th><th>Truth</th></tr></thead><tbody></tbody></table></div>
+    <div class="row">
+      <button class="primary" id="copy">Copy results</button>
+      <button id="clear">Clear results</button>
+      <span class="small muted" id="copymsg"></span>
+    </div>
+    <textarea id="dump" readonly hidden aria-label="Results text"></textarea>
+  </section>
+</main>
+
+<script id="core">
+/* ---------- Letter parsing (pure; unit-tested) ---------- */
+const SOUNDS = {
+  a:["a","ay","eh","hey","aye a"], b:["b","be","bee","bea","bae"], c:["c","see","sea","cee","si","she"],
+  d:["d","dee","de","di"], e:["e","ee","ea"], f:["f","ef","eff","effe"], g:["g","gee","jee","ji","ge"],
+  h:["h","aitch","age","ache","eich","hache"], i:["i","eye","ai","aye"], j:["j","jay","jae","jaye"],
+  k:["k","kay","kaye","cay","que"], l:["l","el","elle","ell","al"], m:["m","em","emm"], n:["n","en","enn"],
+  o:["o","oh","owe","ou"], p:["p","pee","pea","pe"], q:["q","queue","cue","kyu","cu"], r:["r","are","ar","arr","our"],
+  s:["s","ess","es","esse"], t:["t","tea","tee","ti","te"], u:["u","you","yu","ewe","yoo"], v:["v","vee","ve","vi"],
+  w:["w","doubleyou","double-u","dublu"], x:["x","ex","ecks","eggs"], y:["y","why","wye","why's"], z:["z","zee","zed","zea"]
+};
+const TOKEN2LETTER = {};
+for (const [L, arr] of Object.entries(SOUNDS)) for (const s of arr) if (!(s in TOKEN2LETTER)) TOKEN2LETTER[s] = L;
+TOKEN2LETTER["aye"] = "i";
+
+function norm(s){ return s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase(); }
+function targetForms(word){ // "swiveled / swivelled" -> both; strip hyphens/spaces/accents
+  return word.split("/").map(w => norm(w).replace(/[^a-z]/g,"")).filter(Boolean);
+}
+/* Returns {letters, merged} — merged=true when a multi-letter word had to be split (lower confidence). */
+function parseLetters(transcript, target){
+  const forms = targetForms(target);
+  let toks = norm(transcript).replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
+  // drop the word itself said before/after the letters, as in a real bee
+  const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
+  if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
+  if (toks.length > 1 && isWord(toks[toks.length-1])) toks = toks.slice(0,-1);
+  const out = []; let merged = false;
+  for (let i=0;i<toks.length;i++){
+    const t = toks[i].replace(/'s$/,"").replace(/'/g,"");
+    if (!t) continue;
+    if ((t==="double"||t==="dubble") && i+1<toks.length){
+      const nxt = toks[i+1].replace(/'/g,"");
+      if (nxt==="you"||nxt==="u"||nxt==="yu"){ out.push("w"); i++; continue; }
+      const L = TOKEN2LETTER[nxt] || (nxt.length===1?nxt:null);
+      if (L){ out.push(L,L); i++; continue; }
+    }
+    if (t==="hyphen"||t==="dash"||t==="space"||t==="capital"||t==="uppercase"||t==="and"||t==="um"||t==="uh") continue;
+    if (t.length===1){ out.push(t); continue; }
+    if (TOKEN2LETTER[t]){ out.push(TOKEN2LETTER[t]); continue; }
+    // recognizer joined letters into a word (e.g. "tiptoe") — split it, flag lower confidence
+    merged = true; for (const ch of t) out.push(ch);
+  }
+  return {letters: out.join(""), merged};
+}
+function isCorrect(letters, target){ return targetForms(target).includes(letters); }
+
+/* Align heard vs target for letter-by-letter feedback (Levenshtein backtrace). */
+function align(heard, target){
+  const a=heard, b=targetForms(target)[0];
+  const n=a.length, m=b.length, D=[...Array(n+1)].map(()=>Array(m+1).fill(0));
+  for(let i=0;i<=n;i++)D[i][0]=i; for(let j=0;j<=m;j++)D[0][j]=j;
+  for(let i=1;i<=n;i++)for(let j=1;j<=m;j++)D[i][j]=Math.min(D[i-1][j]+1,D[i][j-1]+1,D[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  const ops=[]; let i=n,j=m;
+  while(i>0||j>0){
+    if(i>0&&j>0&&D[i][j]===D[i-1][j-1]+(a[i-1]===b[j-1]?0:1)){ops.push({ch:a[i-1],t:a[i-1]===b[j-1]?"m":"x",want:b[j-1]});i--;j--;}
+    else if(i>0&&D[i][j]===D[i-1][j]+1){ops.push({ch:a[i-1],t:"x",want:""});i--;}
+    else {ops.push({ch:"_",t:"gap",want:b[j-1]});j--;}
+  }
+  return ops.reverse();
+}
+/* Lenient check: does ANY combination of recognizer alternatives produce the target? (capped) */
+function anyAltCorrect(segments, target){
+  let combos=[""];
+  for(const alts of segments){
+    const next=[]; for(const c of combos) for(const a of alts){ next.push(c+" "+a); if(next.length>3000) break; }
+    combos=next;
+  }
+  return combos.some(c=>isCorrect(parseLetters(c,target).letters,target));
+}
+if (typeof module!=="undefined") module.exports={parseLetters,isCorrect,align,anyAltCorrect,targetForms};
+</script>
+
+<script>
+const SETS = {
+  g2:["tiptoe","pudding","beets","invent","globe","badly","maple","splinter","pimple","tabby"],
+  g4:["pleats","despair","obtain","scaffolding","unwavering","captivity","dwelling","spectators","griddle","Borneo"]
+};
+const $ = id => document.getElementById(id);
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let results = load(); let idx = 0; let rec = null; let listening = false;
+let segments = []; // array of arrays of alternative transcripts (final)
+let interim = ""; let current = null;
+
+function load(){ try{ return JSON.parse(localStorage.getItem("micTestResults")||"[]"); }catch(e){ return []; } }
+function save(){ try{ localStorage.setItem("micTestResults", JSON.stringify(results)); }catch(e){} }
+function words(){ return SETS[$("set").value]; }
+function word(){ return words()[idx]; }
+
+/* ---------- Device check ---------- */
+async function diag(){
+  const rows = [];
+  rows.push(["Secure (HTTPS) page", window.isSecureContext, window.isSecureContext?"Yes":"No: open the https:// link"]);
+  rows.push(["Speech recognition in this browser", !!SR, SR?"Yes":"No: use Chrome, not the Claude or Facebook in-app browser"]);
+  rows.push(["Text-to-speech voice", "speechSynthesis" in window, ("speechSynthesis" in window)?"Yes":"No"]);
+  let mic = "wait", micTxt = "Asked when you tap Start";
+  try{ const p = await navigator.permissions.query({name:"microphone"}); mic = p.state==="granted"?true:p.state==="denied"?false:"wait";
+       micTxt = p.state==="granted"?"Allowed":p.state==="denied"?"Blocked: allow mic in Chrome site settings":"Asked when you tap Start"; }catch(e){}
+  rows.push(["Microphone permission", mic, micTxt]);
+  rows.push(["Browser", "info", navigator.userAgent.match(/(Chrome|CriOS|Firefox|Safari|Edg)\/[\d.]+/)?.[0] || "unknown"]);
+  $("diag").innerHTML = "";
+  for (const [k, ok, txt] of rows){
+    const d=document.createElement("div"); const s=document.createElement("span"); s.textContent=k;
+    const p=document.createElement("span"); p.className="pill "+(ok===true?"ok":ok===false?"no":"wait"); p.textContent=txt;
+    d.append(s,p); $("diag").append(d);
+  }
+}
+
+/* ---------- Speech out ---------- */
+function say(text){
+  if(!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang="en-US"; u.rate=0.85; speechSynthesis.speak(u);
+}
+
+/* ---------- Speech in ---------- */
+function makeRec(continuous){
+  const r = new SR(); r.lang="en-US"; r.interimResults=true; r.maxAlternatives=5; r.continuous=continuous;
+  r.onresult = e => {
+    if (continuous){
+      // rebuild from the full result list; collapse Android's cumulative duplicates
+      const fin=[]; let inter="";
+      for (let i=0;i<e.results.length;i++){
+        const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
+        if(res.isFinal){
+          const prev=fin[fin.length-1];
+          if(prev && alts[0].startsWith(prev[0])) fin[fin.length-1]=alts; else fin.push(alts);
+        } else inter += " "+alts[0];
+      }
+      segments = baseSegments.concat(fin); interim = inter;
+    } else {
+      interim="";
+      for (let i=e.resultIndex;i<e.results.length;i++){
+        const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
+        if(res.isFinal) segments.push(alts); else interim += " "+alts[0];
+      }
+    }
+    render();
+  };
+  r.onerror = e => { lastError = e.error; if(e.error==="not-allowed"||e.error==="service-not-allowed"){ listening=false; } render(); diag(); };
+  r.onend = () => { if(listening){ baseSegments = segments.slice(); try{ r.start(); }catch(err){} } else render(); };
+  return r;
+}
+let baseSegments = []; let lastError = "";
+function start(){
+  if(!SR){ return; }
+  segments=[]; baseSegments=[]; interim=""; lastError=""; current=null;
+  listening=true; rec = makeRec($("mode").value==="continuous");
+  try{ rec.start(); }catch(e){ lastError=String(e); }
+  $("truth").hidden=true; $("verdict").hidden=true; render();
+}
+function stop(){
+  listening=false; try{ rec && rec.stop(); }catch(e){}
+  // give the recognizer a moment to deliver its last final result
+  setTimeout(finish, 700);
+}
+function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+interim):""); }
+function finish(){
+  const w = word(); const top = segments.map(s=>s[0]).join(" ");
+  const p = parseLetters(top, w);
+  current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
+              strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
+              mode:$("mode").value, error:lastError };
+  render();
+}
+
+/* ---------- Render ---------- */
+function render(){
+  const w = word();
+  $("progress").textContent = `Word ${idx+1} of ${words().length}`;
+  $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
+  $("start").parentElement; $("start").classList.toggle("listening", listening);
+  $("startlbl").textContent = listening ? "Listening…" : "Start spelling";
+  $("start").disabled = listening || !SR; $("done").disabled = !listening;
+  const live = parseLetters(heardText(), w).letters;
+  const tiles = $("tiles"); tiles.innerHTML="";
+  const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
+  for (const o of ops){ const t=document.createElement("span"); t.className="tile "+o.t; t.textContent=o.ch; if(o.t==="x"||o.t==="gap") t.title="Should be: "+(o.want||"(nothing)"); tiles.append(t); }
+  $("raw").textContent = (current?current.raw:heardText()).trim() ? "Recognizer heard: “"+(current?current.raw:heardText()).trim()+"”" : (lastError?"Error: "+lastError:"");
+  if (current){
+    const v=$("verdict"); v.hidden=false;
+    v.className="verdict "+(current.strict?"ok":"no");
+    v.textContent = current.strict ? "App says: correct" : `App says: incorrect. The word is “${w}”.` + (current.merged?" (recognizer joined letters into a word)":"");
+    $("truth").hidden=false;
+  }
+  renderLog();
+}
+function renderLog(){
+  const tb=$("log").querySelector("tbody"); tb.innerHTML="";
+  results.forEach((r,i)=>{
+    const tr=document.createElement("tr");
+    [i+1, r.word, r.heard||"—", r.strict?"✓":"✗", r.truth==="right"?"Right":"Wrong"].forEach(v=>{const td=document.createElement("td"); td.textContent=v; tr.append(td);});
+    tb.append(tr);
+  });
+  const n=results.length;
+  const agree=results.filter(r=>r.strict===(r.truth==="right")).length;
+  const falseAccept=results.filter(r=>r.strict && r.truth==="wrong").length;
+  const falseReject=results.filter(r=>!r.strict && r.truth==="right").length;
+  const lenAgree=results.filter(r=>r.lenient===(r.truth==="right")).length;
+  const S=$("stats"); S.innerHTML="";
+  [["Words tested",n],["App agreed with you",n?Math.round(100*agree/n)+"%":"—"],["Wrong spelling marked right",falseAccept],["Right spelling marked wrong",falseReject],["Agreement, lenient scoring",n?Math.round(100*lenAgree/n)+"%":"—"]]
+    .forEach(([k,v])=>{const d=document.createElement("div"); d.className="stat"; const b=document.createElement("b"); b.textContent=v; d.append(b, document.createTextNode(k)); S.append(d);});
+}
+
+/* ---------- Events ---------- */
+$("hear").onclick = () => say(`${word()}. ${word()}.`);
+$("start").onclick = start; $("done").onclick = stop;
+function record(truth){ if(!current) return; results.push({...current, truth, set:$("set").value, ts:new Date().toISOString()}); save(); next(); }
+$("tRight").onclick = () => record("right"); $("tWrong").onclick = () => record("wrong");
+$("tMic").onclick = () => { current=null; segments=[]; render(); };
+function next(){ current=null; segments=[]; interim=""; idx=Math.min(idx+1, words().length-1); $("truth").hidden=true; $("verdict").hidden=true; render(); }
+$("skip").onclick = next;
+$("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
+$("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
+$("showword").onchange = render;
+$("copy").onclick = async () => {
+  const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
+  try{ await navigator.clipboard.writeText(txt); $("copymsg").textContent="Copied. Paste it into the chat."; }
+  catch(e){ const d=$("dump"); d.hidden=false; d.value=txt; d.select(); $("copymsg").textContent="Select all the text below and copy it."; }
+};
+let clearArmed=false;
+$("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textContent="Tap again to clear"; setTimeout(()=>{clearArmed=false;$("clear").textContent="Clear results";},3000); return; }
+  results=[]; save(); clearArmed=false; $("clear").textContent="Clear results"; render(); };
+
+diag(); render();
+</script>
+</body>
+</html>
