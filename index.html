@@ -88,7 +88,8 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
   <section class="panel" aria-labelledby="h-how">
     <h2 id="h-how">How to run it</h2>
     <ol class="small">
-      <li>On a Fire tablet (Silk), use <b>Mode C</b>. It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
+      <li><b>Mode E</b> records the whole spelling and sends it to Google when you tap Done. Letters appear 1–2 seconds later, not while spelling. Enter the Worker URL and passcode once per device.</li>
+      <li>On a Fire tablet (Silk), use <b>Mode E</b> (or Mode C). It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
       <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
       <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
       <li>Coach your kid to leave a short pause between letters. When letters run together, Google tends to hear a word (like “Angie”) instead.</li>
@@ -112,6 +113,7 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
         <select id="mode" title="Listening mode">
           <option value="restart">Mode A: short bursts</option>
           <option value="vosk">Mode C: on-device</option>
+          <option value="cloud">Mode E: record + Google Cloud</option>
         </select>
       </div>
     </div>
@@ -124,6 +126,13 @@ textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border
       <button id="hear">Hear word</button>
       <button id="start" class="primary"><span class="mic"><span class="dot"></span><span id="startlbl">Start spelling</span></span></button>
       <button id="done" disabled>Done</button>
+    </div>
+    <div id="cloudbox" class="panel small" hidden style="padding:12px;gap:8px">
+      <div class="row"><label for="cloudurl" style="min-width:90px">Worker URL</label><input id="cloudurl" type="url" placeholder="https://spelling-bee.yourname.workers.dev" style="flex:1;min-width:0"></div>
+      <div class="row"><label for="cloudpass" style="min-width:90px">Passcode</label><input id="cloudpass" type="password" autocomplete="off" style="flex:1;min-width:0"></div>
+      <div class="row"><label for="cloudmodel" style="min-width:90px">Model</label><select id="cloudmodel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select>
+        <button id="cloudsave" type="button">Save on this device</button></div>
+      <p class="muted">Saved only on this device. Never put the passcode in the page itself; the repo is public.</p>
     </div>
     <div id="voskbox" class="row small" hidden>
       <span class="pill wait" id="voskstatus">Speech model not loaded</span>
@@ -183,7 +192,7 @@ const AMBIG = { in:["n","in"], an:["n","an"], inn:["n","in"], and:["n",""], end:
                 all:["l"], ole:["l"], it:["t","it"], at:["t","at"], ok:["k","ok"], okay:["k"], is:["s","is"], es:["s"] };
 /* Returns {letters, merged, alts}: letters = primary reading; alts = other readings of ambiguous tokens;
    merged = a multi-letter word had to be split (recognizer may have auto-corrected the spelling). */
-function parseLetters(transcript, target){
+function parseLetters(transcript, target, opts={}){
   const forms = targetForms(target);
   // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
   const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
@@ -211,7 +220,8 @@ function parseLetters(transcript, target){
     if (AMBIG[t]){ pieces.push(AMBIG[t]); ambiguous.push(t); continue; }
     if (TOKEN2LETTER[t]){ pieces.push([TOKEN2LETTER[t]]); continue; }
     // recognizer joined letters into a word (e.g. "tiptoe") — split it, flag lower confidence
-    merged = true; mergedWords.push(t); pieces.push([t]);
+    // in cloud mode Google's letter-sequence class joins spelled letters on purpose ("s c a" -> "sca"): not a word guess
+    merged = true; if (!opts.joined) mergedWords.push(t); pieces.push([t]);
   }
   const letters = pieces.map(p=>p[0]).join("");
   let combos = [""];
@@ -426,12 +436,75 @@ function stopVosk(){
   }, 900);
 }
 
+/* ---------- Mode E: record the whole spelling, then transcribe with Google Cloud (via your Cloudflare Worker) ---------- */
+const C = { rec:null, stream:null, chunks:[], ctx:null, node:null, cancel:false };
+let busy = false;
+function getCloud(){ try{ return { url: localStorage.getItem("cloudUrl")||"", pass: localStorage.getItem("cloudPass")||"", model: localStorage.getItem("cloudModel")||"default" }; }catch(e){ return {url:"",pass:"",model:"default"}; } }
+function cloudReady(){
+  const c = getCloud(); $("cloudurl").value=c.url; $("cloudpass").value=c.pass; $("cloudmodel").value=c.model;
+  if (!window.MediaRecorder){ voskStatus("This browser can't record audio", "no"); return false; }
+  if (!c.url || !c.pass){ voskStatus("Enter the Worker URL and passcode, then Save", "wait"); return false; }
+  voskStatus("Cloud ready", "ok"); return true;
+}
+$("cloudsave").onclick = () => {
+  try{ localStorage.setItem("cloudUrl", $("cloudurl").value.trim().replace(/\/+$/,"")); localStorage.setItem("cloudPass", $("cloudpass").value); localStorage.setItem("cloudModel", $("cloudmodel").value); }catch(e){}
+  cloudReady();
+};
+async function startCloud(){
+  if (!cloudReady()){ listening=false; render(); return; }
+  try{ C.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); }
+  catch(e){ lastError="microphone: "+(e.name||e); listening=false; render(); return; }
+  const type = ["audio/webm;codecs=opus","audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+  C.chunks=[]; C.cancel=false;
+  C.rec = new MediaRecorder(C.stream, type?{mimeType:type}:undefined);
+  C.rec.ondataavailable = e => { if (e.data && e.data.size) C.chunks.push(e.data); };
+  C.rec.onstop = sendCloud;
+  C.rec.start(250);
+  // level meter so the kid can see the mic hears them
+  try{
+    C.ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const src = C.ctx.createMediaStreamSource(C.stream); C.node = C.ctx.createAnalyser(); C.node.fftSize=1024; src.connect(C.node);
+    const buf = new Float32Array(C.node.fftSize);
+    const tick = () => { if(!C.node) return; C.node.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; $("level").style.width=Math.min(100,Math.sqrt(s/buf.length)*400)+"%"; requestAnimationFrame(tick); };
+    tick();
+  }catch(e){}
+  voskStatus("Recording. Tap Done when finished", "ok");
+  render();
+}
+function stopCloud(){
+  try{ C.rec && C.rec.state!=="inactive" && C.rec.stop(); }catch(e){}
+  try{ C.stream && C.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  try{ C.ctx && C.ctx.close(); }catch(e){}
+  C.node=null; $("level").style.width="0";
+}
+async function sendCloud(){
+  const recd = C.rec; C.rec=null;
+  if (C.cancel){ C.chunks=[]; return; }
+  const blob = new Blob(C.chunks, {type: (recd && recd.mimeType) || "audio/webm"}); C.chunks=[];
+  const c = getCloud();
+  busy = true; voskStatus(`Sending ${(blob.size/1024).toFixed(0)} KB to Google…`, "wait"); render();
+  const t0 = performance.now();
+  try{
+    const r = await fetch(`${c.url}/?m=${encodeURIComponent(c.model)}`, { method:"POST", headers:{ "X-Passcode": c.pass, "Content-Type": blob.type }, body: blob });
+    const data = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
+    if (!r.ok || data.error){
+      lastError = (data.error && (data.error.message || data.error)) || ("HTTP "+r.status);
+      voskStatus("Cloud error: "+String(lastError).slice(0,140), "no");
+    } else {
+      segments = (data.results||[]).map(x => (x.alternatives||[]).map(a => (a.transcript||"").trim()).filter(Boolean)).filter(a=>a.length);
+      voskStatus(`Answer in ${((performance.now()-t0)/1000).toFixed(1)} s` + (data.classFallback?" (letter mode not accepted, used plain mode)":""), "ok");
+    }
+  }catch(e){ lastError = "network: "+(e.message||e); voskStatus("Couldn't reach the Worker: "+(e.message||e), "no"); }
+  busy = false; finished = false; finishOnce();
+}
+
 function start(){
   const mode=$("mode").value;
-  if(mode!=="vosk" && !SR){ return; }
+  if(mode!=="vosk" && mode!=="cloud" && !SR){ return; }
   segments=[]; baseSegments=[]; interim=""; lastError=""; current=null; V.confs=[];
   listening=true; $("truth").hidden=true; $("verdict").hidden=true;
   if (mode==="vosk"){ startVosk(); render(); return; }
+  if (mode==="cloud"){ startCloud(); render(); return; }
   if (mode==="local"){
     render();
     ensureLocal().then(ok => {
@@ -447,6 +520,7 @@ function start(){
 function stop(){
   listening=false;
   if ($("mode").value==="vosk"){ render(); stopVosk(); return; }
+  if ($("mode").value==="cloud"){ render(); stopCloud(); return; }
   finished = false;
   try{ rec && rec.stop(); }catch(e){}
   // finish when the recognizer reports it has ended (last results delivered), or after 1.5 s at most
@@ -457,7 +531,7 @@ function finishOnce(){ if (finished) return; finished = true; if (interim.trim()
 function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+interim):""); }
 function finish(){
   const w = word(); const top = segments.map(s=>s[0]).join(" ");
-  const p = parseLetters(top, w);
+  const p = parseLetters(top, w, {joined: $("mode").value==="cloud"});
   current = { word:w, heard:p.letters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
               verdict:verdictFor(p,w,segments.length), ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
               mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
@@ -470,12 +544,13 @@ function render(){
   $("progress").textContent = `Word ${idx+1} of ${words().length}`;
   $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
   // Mode A restarts the mic after each pause; show the kid when it's safe to keep going
-  const micOn = micLive || $("mode").value==="vosk";
+  const micOn = micLive || ["vosk","cloud"].includes($("mode").value);
   $("start").classList.toggle("listening", listening);
   $("start").classList.toggle("paused", listening && !micOn);
-  $("startlbl").textContent = !listening ? "Start spelling" : micOn ? "Listening, keep going" : "Wait for red…";
-  $("start").disabled = listening || ($("mode").value!=="vosk" && !SR);
-  $("voskbox").hidden = !["vosk","local"].includes($("mode").value); $("done").disabled = !listening;
+  $("startlbl").textContent = busy ? "Checking…" : !listening ? "Start spelling" : $("mode").value==="cloud" ? "Recording, tap Done" : micOn ? "Listening, keep going" : "Wait for red…";
+  $("start").disabled = listening || busy || (!["vosk","cloud"].includes($("mode").value) && !SR);
+  $("voskbox").hidden = !["vosk","local","cloud"].includes($("mode").value);
+  $("cloudbox").hidden = $("mode").value!=="cloud"; $("done").disabled = !listening;
   const live = parseLetters(heardText(), w).letters;
   const tiles = $("tiles"); tiles.innerHTML="";
   const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
@@ -485,7 +560,7 @@ function render(){
     const v=$("verdict"); v.hidden=false;
     const vd=current.verdict;
     v.className="verdict "+(vd==="correct"?"ok":(vd==="unsure"||vd==="unclear")?"wait":"no");
-    v.textContent = vd==="correct" ? "App says: correct" + (current.merged?" (recognizer joined letters into a word, so double-check)":"")
+    v.textContent = vd==="correct" ? "App says: correct" + (current.merged && current.mode!=="cloud"?" (recognizer joined letters into a word, so double-check)":"")
       : vd==="unsure" ? `App isn't sure. Google wrote “${(current.ambiguous||[]).join("”, “")}”, which could be read more than one way. The full app would ask your kid to repeat that letter.`
       : vd==="unclear" ? (!current.heard ? "Didn't catch any letters. Tap Mic mess-up / redo and try again."
         : (current.mergedWords||[]).length
@@ -524,7 +599,7 @@ $("skip").onclick = next;
 $("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
 $("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
 $("showword").onchange = render;
-$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if($("mode").value==="local") ensureLocal(); render(); };
+$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if($("mode").value==="cloud") cloudReady(); render(); };
 if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
 $("copy").onclick = async () => {
   const txt = JSON.stringify({ua:navigator.userAgent, results}, null, 1);
@@ -537,7 +612,7 @@ $("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textCo
 
 // Release the mic when this tab is hidden or closed. Otherwise a background tab keeps restarting
 // its listening session and can starve the tab you're actually using.
-function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); render(); }
+function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } render(); }
 document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
 window.addEventListener("pagehide", releaseMic);
 // Safety: stop auto-restarting after 90 s so a forgotten session can't run forever
