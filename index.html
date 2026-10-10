@@ -281,11 +281,7 @@ async function diag(){
   const rows = [];
   rows.push(["Secure (HTTPS) page", window.isSecureContext, window.isSecureContext?"Yes":"No: open the https:// link"]);
   const silk = /Silk\//.test(navigator.userAgent);
-  rows.push(["Browser speech recognition (Modes A/B)", silk?false:!!SR, silk?"Not usable in Silk: use Mode C":SR?"Present (may still fail)":"No: use Mode C"]);
-  // don't probe on-device availability at load (it can crash browsers without a speech service); Mode D checks when picked
-  const hasLocalApi = !!(SR && (SR.available || SR.availableOnDevice));
-  rows.push(["Chrome on-device + letter boost (Mode D)", hasLocalApi?"wait":false,
-             hasLocalApi ? ("Pick Mode D to check" + (window.SpeechRecognitionPhrase?"":" (no letter boost API)")) : "Not in this Chrome"]);
+  rows.push(["Browser speech recognition (Mode A)", silk?false:!!SR, silk?"Not usable in Silk: use Mode C":SR?"Present (may still fail)":"No: use Mode C"]);
   rows.push(["On-device recognition (Mode C)", !!(window.WebAssembly && window.Worker && navigator.mediaDevices && window.indexedDB), (window.WebAssembly && navigator.mediaDevices)?"Supported":"Not supported"]);
   rows.push(["Text-to-speech voice", "speechSynthesis" in window, ("speechSynthesis" in window)?"Yes":"No"]);
   let mic = "wait", micTxt = "Asked when you tap Start";
