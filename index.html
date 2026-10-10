@@ -3,954 +3,725 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Spelling Mic Test</title>
+<title>Spelling Bee Coach</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
 <style>
-/* Layout: one narrow column, a "test card" for the current word, results log below. Built for a phone/tablet held by a parent. */
+/* Layout: one centered column of "cards" (views), a slim top bar with the kid and the bee countdown.
+   Built for tablets held by kids: big targets, big letters, honey accent like a bee. */
 :root{
-  --bg:#f7f6f1; --surface:#ffffff; --ink:#1d2433; --muted:#5d6577; --line:#dcdad0;
-  --honey:#c98a00; --honey-soft:#fbefcc; --good:#1f7a4a; --good-soft:#dcf1e4; --bad:#b3261e; --bad-soft:#f9dedb;
+  --bg:#f7f5ee; --surface:#ffffff; --ink:#1d2433; --muted:#5d6577; --line:#dedbcf;
+  --honey:#c98a00; --honey-strong:#e0a100; --honey-soft:#fcf0cc; --good:#1f7a4a; --good-soft:#dcf1e4; --bad:#b3261e; --bad-soft:#f9dedb;
   --display:"Andika","Atkinson Hyperlegible",system-ui,sans-serif;
   --body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#14171f; --surface:#1d2230; --ink:#eceae2; --muted:#a4abba; --line:#323a4c;
-  --honey:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
+  --honey:#f0b429; --honey-strong:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
   color-scheme:dark;}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{margin:0}
-body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body);padding:env(safe-area-inset-top,0px) 16px calc(env(safe-area-inset-bottom,0px) + 32px)}
-main{max-width:640px;margin:0 auto;display:grid;gap:20px;padding-block:20px}
-h1{font:700 1.6rem/1.2 var(--display);margin:0;text-wrap:balance}
-h2{font:700 1.05rem/1.3 var(--body);margin:0}
+body{background:var(--bg);color:var(--ink);font:17px/1.5 var(--body);padding:env(safe-area-inset-top,0px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)}
+main{max-width:720px;margin:0 auto;display:grid;gap:18px;padding-block:12px}
+h1,h2,h3{margin:0;text-wrap:balance}
+h1{font:700 1.5rem/1.2 var(--display)}
+h2{font:700 1.25rem/1.25 var(--display)}
+h3{font:700 1rem/1.3 var(--body)}
 p{margin:0}
-.muted{color:var(--muted)}
-.small{font-size:.875rem}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px}
-.diag{display:grid;gap:6px;font-size:.9rem}
-.diag div{display:flex;justify-content:space-between;gap:12px}
-.pill{font-size:.8rem;font-weight:700;padding:2px 10px;border-radius:999px;white-space:nowrap}
-.ok{background:var(--good-soft);color:var(--good)} .no{background:var(--bad-soft);color:var(--bad)} .wait{background:var(--honey-soft);color:var(--honey)}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.muted{color:var(--muted)} .small{font-size:.875rem}
+.top{max-width:720px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding-block:12px 4px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:34px;height:34px;flex:none}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.between{justify-content:space-between}
+.pill{font-size:.8rem;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;background:var(--honey-soft);color:var(--honey)}
+.pill.ok{background:var(--good-soft);color:var(--good)} .pill.no{background:var(--bad-soft);color:var(--bad)} .pill.plain{background:transparent;border:1px solid var(--line);color:var(--muted)}
 button,select,input{font:inherit;color:inherit}
-button{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;min-height:48px}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--honey);outline-offset:2px}
-button.primary{background:var(--honey);border-color:var(--honey);color:#1d2433}
+button{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 16px;font-weight:700;cursor:pointer;min-height:48px}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--honey);outline-offset:2px}
+button.primary{background:var(--honey-strong);border-color:var(--honey-strong);color:#1d2433}
 button.good{background:var(--good-soft);border-color:var(--good);color:var(--good)}
 button.bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+button.link{border:none;background:none;padding:6px 4px;min-height:auto;color:var(--muted);text-decoration:underline;font-weight:400}
 button:disabled{opacity:.45;cursor:default}
-select,input{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 12px;min-height:48px}
-.word{font:700 clamp(2rem,9vw,3rem)/1.1 var(--display);letter-spacing:.02em;overflow-wrap:anywhere}
-.word.hidden{color:transparent;text-shadow:0 0 18px var(--muted);user-select:none}
-.tiles{display:flex;flex-wrap:wrap;gap:6px;min-height:52px}
-.tile{font:700 1.5rem/1 var(--display);width:42px;height:48px;display:grid;place-items:center;border-radius:8px;border:2px solid var(--line);background:var(--bg);text-transform:lowercase}
+select,input[type=text],input[type=url],input[type=password]{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;min-height:48px;min-width:0}
+label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
+.big{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.big button{min-height:96px;display:grid;gap:4px;justify-items:start;text-align:left;padding:14px 16px}
+.big button b{font:700 1.2rem/1.2 var(--display)}
+.big button span{font-weight:400;font-size:.9rem;color:var(--muted)}
+.big button.primary span{color:#3a3320}
+.asks{display:flex;flex-wrap:wrap;gap:8px}
+.asks button{min-height:44px;padding:8px 12px;font-size:.95rem}
+.mic{width:100%;min-height:88px;font:700 1.35rem/1.2 var(--display);display:flex;align-items:center;justify-content:center;gap:12px}
+.dot{width:16px;height:16px;border-radius:50%;background:currentColor;opacity:.5}
+.recording .dot{background:var(--bad);opacity:1;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.recording .dot{animation:none}}
+.meter{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.meter span{display:block;height:100%;width:0;background:var(--good);transition:width .1s linear}
+.status{font-size:.95rem;color:var(--muted);min-height:1.5em}
+.tiles{display:flex;flex-wrap:wrap;gap:6px}
+.tile{font:700 1.6rem/1 var(--display);width:44px;height:52px;display:grid;place-items:center;border-radius:10px;border:2px solid var(--line);background:var(--bg);text-transform:lowercase}
 .tile.m{border-color:var(--good);background:var(--good-soft);color:var(--good)}
 .tile.x{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
 .tile.gap{border-style:dashed;border-color:var(--bad);color:var(--bad);background:transparent}
-.label{font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.mic{display:inline-flex;align-items:center;gap:8px}
-.dot{width:12px;height:12px;border-radius:50%;background:var(--muted)}
-.listening .dot{background:var(--bad);animation:pulse 1s infinite}
-.listening.paused .dot{background:var(--honey);animation:none}
-@keyframes pulse{50%{opacity:.3}}
-@media (prefers-reduced-motion:reduce){.listening .dot{animation:none}}
-.verdict{font-weight:700;padding:10px 12px;border-radius:10px}
-.raw{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}
+.answer{font:700 clamp(1.8rem,7vw,2.6rem)/1.1 var(--display);letter-spacing:.04em;overflow-wrap:anywhere}
+.answer .w{color:var(--bad);text-decoration:underline;text-decoration-thickness:3px}
+.verdict{font:700 1.25rem/1.3 var(--display);padding:12px 14px;border-radius:12px}
+.verdict.ok{background:var(--good-soft);color:var(--good)} .verdict.no{background:var(--bad-soft);color:var(--bad)} .verdict.wait{background:var(--honey-soft);color:var(--honey)}
+.progress{display:flex;gap:6px;flex-wrap:wrap}
+.progress i{width:14px;height:14px;border-radius:50%;background:var(--line);display:block}
+.progress i.ok{background:var(--good)} .progress i.no{background:var(--bad)} .progress i.now{background:var(--honey-strong)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:12px}
+.stat b{display:block;font:700 1.6rem/1.2 var(--display);font-variant-numeric:tabular-nums}
+.bars{display:grid;gap:8px}
+.bar{display:grid;grid-template-columns:7.5em 1fr 4.5em;gap:8px;align-items:center;font-size:.9rem}
+.bar .track{height:12px;border-radius:6px;background:var(--line);overflow:hidden}
+.bar .fill{height:100%;background:var(--honey-strong)}
+.bar .fill.good{background:var(--good)}
+.bar span:last-child{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
 .tablewrap{overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:.85rem;font-variant-numeric:tabular-nums}
-th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+table{border-collapse:collapse;width:100%;font-size:.92rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-.stat{border:1px solid var(--line);border-radius:10px;padding:10px}
-.stat b{display:block;font:700 1.4rem/1.2 var(--display)}
-ol{margin:0;padding-left:1.2em;display:grid;gap:4px}
-.meter{display:inline-block;width:120px;height:10px;border-radius:5px;background:var(--line);overflow:hidden}
-.meter span{display:block;height:100%;width:0;background:var(--good);transition:width .1s linear}
-textarea{width:100%;min-height:120px;font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);padding:8px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:.95rem;cursor:pointer}
+.chip input{width:18px;height:18px}
+.typebox{display:flex;gap:8px}
+.typebox input{flex:1;font:700 1.4rem var(--display);letter-spacing:.06em;text-transform:lowercase}
+.spark{display:flex;align-items:flex-end;gap:3px;height:60px}
+.spark i{flex:1;background:var(--honey-strong);border-radius:3px 3px 0 0;min-height:2px;display:block}
+.kidlist{display:grid;gap:8px}
+.kidlist button{justify-content:flex-start;display:flex;gap:10px;align-items:center;text-align:left}
+.celebrate{animation:pop .5s ease-out}
+@keyframes pop{0%{transform:scale(.9)}60%{transform:scale(1.04)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.celebrate{animation:none}}
+.sr{position:absolute;left:-9999px}
 </style>
 </head>
 <body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><ellipse cx="20" cy="22" rx="11" ry="13" fill="#e0a100"/><path d="M10 18h20M9.5 24h21M11 30h18" stroke="#1d2433" stroke-width="3"/><ellipse cx="12" cy="10" rx="7" ry="5" fill="#cfe3f5" opacity=".9"/><ellipse cx="28" cy="10" rx="7" ry="5" fill="#cfe3f5" opacity=".9"/></svg>
+    <div><h1>Spelling Bee Coach</h1><p class="small muted" id="countdown"></p></div>
+  </div>
+  <div class="row">
+    <button class="link" id="kidChip" hidden></button>
+    <span class="pill plain" id="ver">v1.0</span>
+  </div>
+</header>
+
 <main>
-  <header style="display:grid;gap:6px">
-    <h1>Spelling Mic Test</h1>
-    <p class="small"><span class="pill ok" id="ver">Page v20</span> <span class="pill wait" id="wver">Worker: not checked yet</span></p>
-    <p class="muted">A 10-word check of whether this device can hear your kids spell letter by letter. Run it once with each kid on their own tablet before we build the full app.</p>
-  </header>
-
-  <section class="panel" aria-labelledby="h-diag">
-    <h2 id="h-diag">Device check</h2>
-    <div class="diag" id="diag"></div>
+  <!-- One-time device setup -->
+  <section class="card" id="v-setup" hidden>
+    <h2>Set up this device</h2>
+    <p class="muted">Enter the Worker address and passcode once. They're saved only on this device.</p>
+    <label class="field">Worker URL<input id="cfgUrl" type="url" placeholder="https://spelling-bee.yourname.workers.dev"></label>
+    <label class="field">Passcode<input id="cfgPass" type="password" autocomplete="off"></label>
+    <div class="row"><button class="primary" id="cfgSave">Save and connect</button><span class="status" id="cfgMsg"></span></div>
   </section>
 
-  <section class="panel" aria-labelledby="h-how">
-    <h2 id="h-how">How to run it</h2>
-    <ol class="small">
-      <li><b>Bee mode</b> runs the real routine: say the word, spell it, say the word again. Saying the word at the end locks in the answer, and the app checks it about 2 seconds after your kid stops talking (no need to tap Done). Saying “can I start over” restarts the spelling, but as in the real bee, letters already said can't change. Uses the same Worker settings as Mode E.</li>
-      <li><b>Mode E</b> records the whole spelling and sends it to Google when you tap Done. Letters appear 1–2 seconds later, not while spelling. Enter the Worker URL and passcode once per device.</li>
-      <li>On a Fire tablet (Silk), use <b>Mode E</b> (or Mode C). It loads a speech model the first time, which takes a minute or two on Wi-Fi. Wait for the green "Speech model ready" before starting.</li>
-      <li>Pick the word set for your kid. Tap <b>Hear word</b>.</li>
-      <li>Tap <b>Start spelling</b>. Your kid says the letters at a normal bee pace, then you tap <b>Done</b>.</li>
-      <li>Coach your kid to leave a short pause between letters. When letters run together, Google tends to hear a word (like “Angie”) instead.</li>
-      <li>After a longer pause the mic restarts. The dot on the button turns amber (“Wait for red…”). Keep spelling once it's red again, or letters get lost.</li>
-      <li>Tap what your kid <i>actually</i> said: <b>Spelled it right</b> or <b>Spelled it wrong</b>. That's the answer key the app is graded against.</li>
-      <li>On 3 of the 10 words, have your kid misspell the word on purpose (swap b/d, drop a double letter). This checks that the app catches mistakes.</li>
-      <li>When you're done, tap <b>Copy results</b> and paste them into the chat with Claude.</li>
-    </ol>
-  </section>
-
-  <section class="panel" aria-labelledby="h-test">
-    <div class="row" style="justify-content:space-between">
-      <h2 id="h-test">Test <span class="pill ok" id="ver2" style="font-size:.75rem;vertical-align:middle">v20</span></h2>
-      <div class="row">
-        <label class="sr" for="set" style="position:absolute;left:-9999px">Word set</label>
-        <select id="set">
-          <option value="g2">2nd-grade page</option>
-          <option value="g4">4th-grade page</option>
-        </select>
-        <label for="mode" style="position:absolute;left:-9999px">Listening mode</label>
-        <select id="mode" title="Listening mode">
-          <option value="restart">Mode A: short bursts</option>
-          <option value="vosk">Mode C: on-device</option>
-          <option value="cloud">Mode E: record + Google Cloud</option>
-          <option value="bee">Bee mode: word, spell, word</option>
-        </select>
+  <!-- Pick a speller -->
+  <section class="card" id="v-kids" hidden>
+    <h2>Who's practicing?</h2>
+    <div class="kidlist" id="kidList"></div>
+    <details id="addKidBox">
+      <summary><b>Add a speller</b></summary>
+      <div style="display:grid;gap:12px;margin-top:12px">
+        <label class="field">Name<input id="newKidName" type="text" autocomplete="off" maxlength="30"></label>
+        <div><b class="small">Word pages to practice</b><div class="chips" id="newKidPages" style="margin-top:6px"></div></div>
+        <button class="primary" id="addKid">Add speller</button>
       </div>
+    </details>
+  </section>
+
+  <!-- Home -->
+  <section class="card" id="v-home" hidden>
+    <div class="row between"><h2 id="hello">Hi!</h2><span class="pill plain" id="syncState"></span></div>
+    <div class="stats" id="homeStats"></div>
+    <div class="big">
+      <button class="primary" id="goPractice"><b>Practice</b><span id="practiceSub"></span></button>
+      <button id="goReview"><b>Review my misses</b><span id="reviewSub"></span></button>
+      <button id="goBee"><b>Bee simulation</b><span>Say the word, spell it, say it again. One miss ends the round.</span></button>
     </div>
-    <div class="row" style="justify-content:space-between">
-      <span class="label" id="progress">Word 1 of 10</span>
-      <label class="row small"><input type="checkbox" id="showword" style="min-height:auto"> Show the word</label>
+    <div class="row"><button id="goStats">Progress</button><button id="goSettings">Settings</button><button class="link" id="switchKid">Switch speller</button></div>
+  </section>
+
+  <!-- Playing a round -->
+  <section class="card" id="v-play" hidden>
+    <div class="row between"><h2 id="playTitle">Practice</h2><button class="link" id="quitRound">End round</button></div>
+    <div class="progress" id="dots" aria-label="Round progress"></div>
+    <p class="muted" id="playHint"></p>
+    <div class="asks" id="asks">
+      <button id="askWord">🔊 Hear the word</button>
+      <button id="askDef">Definition</button>
+      <button id="askSent">Use it in a sentence</button>
+      <button id="askPos">Part of speech</button>
     </div>
-    <div class="word hidden" id="word">tiptoe</div>
-    <div class="row">
-      <button id="hear">Hear word</button>
-      <button id="start" class="primary"><span class="mic"><span class="dot"></span><span id="startlbl">Start spelling</span></span></button>
-      <button id="done" disabled>Done</button>
+    <div id="spellArea" style="display:grid;gap:10px">
+      <button class="mic primary" id="micBtn"><span class="dot"></span><span id="micLbl">Tap and spell</span></button>
+      <div class="meter" aria-hidden="true"><span id="level"></span></div>
+      <p class="status" id="status" aria-live="polite"></p>
+      <div class="row">
+        <button id="doneBtn" hidden>Done</button>
+        <button id="restartBtn" hidden>Start over</button>
+        <button class="link" id="typeToggle">Type it instead</button>
+      </div>
+      <form class="typebox" id="typeBox" hidden autocomplete="off"><label class="sr" for="typeIn">Type the spelling</label><input id="typeIn" type="text" autocapitalize="off" autocorrect="off" spellcheck="false"><button class="primary" type="submit">Check</button></form>
     </div>
-    <div id="cloudbox" class="panel small" hidden style="padding:12px;gap:8px">
-      <div class="row"><label for="cloudurl" style="min-width:90px">Worker URL</label><input id="cloudurl" type="url" placeholder="https://spelling-bee.yourname.workers.dev" style="flex:1;min-width:0"></div>
-      <div class="row"><label for="cloudpass" style="min-width:90px">Passcode</label><input id="cloudpass" type="password" autocomplete="off" style="flex:1;min-width:0"></div>
-      <div class="row"><label for="cloudmodel" style="min-width:90px">Model</label><select id="cloudmodel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select>
-        <button id="cloudsave" type="button">Save on this device</button></div>
-      <p class="muted">Saved only on this device. Never put the passcode in the page itself; the repo is public.</p>
+    <div id="resultArea" hidden style="display:grid;gap:12px">
+      <div class="verdict" id="verdict"></div>
+      <div><span class="small muted">What we heard</span><div class="tiles" id="tiles"></div></div>
+      <div><span class="small muted">Correct spelling</span><div class="answer" id="answer"></div></div>
+      <p class="small muted" id="detail"></p>
+      <div class="row">
+        <button class="primary" id="nextBtn">Next word</button>
+        <button id="redoBtn">That's not what I said</button>
+      </div>
+      <div class="row small"><span class="muted">Grown-up check:</span><button class="link" id="markRight">Mark right</button><button class="link" id="markWrong">Mark wrong</button></div>
     </div>
-    <div id="voskbox" class="row small" hidden>
-      <span class="pill wait" id="voskstatus">Speech model not loaded</span>
-      <span class="meter" aria-label="Microphone level"><span id="level"></span></span>
-    </div>
-    <div>
-      <span class="label">Letters heard</span>
-      <div class="tiles" id="tiles" aria-live="polite"></div>
-      <p class="raw" id="raw"></p>
-    </div>
-    <div id="verdict" hidden></div>
-    <div id="truth" class="row" hidden>
-      <button class="good" id="tRight">Spelled it right</button>
-      <button class="bad" id="tWrong">Spelled it wrong</button>
-      <button id="tMic">Mic mess-up / redo</button>
-    </div>
-    <div class="row">
-      <button id="prev">Back</button>
-      <button id="skip">Skip word</button>
+    <div id="summaryArea" hidden style="display:grid;gap:12px">
+      <div class="verdict ok" id="summaryHead"></div>
+      <div class="tablewrap"><table><thead><tr><th>Word</th><th>Result</th><th>You spelled</th></tr></thead><tbody id="summaryRows"></tbody></table></div>
+      <div class="row"><button class="primary" id="againBtn">Another round</button><button id="homeBtn">Done</button></div>
     </div>
   </section>
 
-  <section class="panel" aria-labelledby="h-res">
-    <h2 id="h-res">Results</h2>
-    <div class="stats" id="stats"></div>
-    <div class="tablewrap"><table id="log"><thead><tr><th>#</th><th>Word</th><th>Heard</th><th>App said</th><th>Truth</th></tr></thead><tbody></tbody></table></div>
+  <!-- Progress -->
+  <section class="card" id="v-stats" hidden>
+    <div class="row between"><h2>Progress</h2><button class="link" id="statsBack">Back</button></div>
+    <label class="field">Speller<select id="statsKid"></select></label>
+    <div id="statsBody" style="display:grid;gap:16px"></div>
+  </section>
+
+  <!-- Settings -->
+  <section class="card" id="v-settings" hidden>
+    <div class="row between"><h2>Settings</h2><button class="link" id="setBack">Back</button></div>
+    <label class="field">Speller's name<input id="setName" type="text" maxlength="30"></label>
+    <div><b class="small">Word pages to practice</b><p class="small muted">Each page has its own grade's words plus the next grade's, like the school list.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
     <div class="row">
-      <button class="primary" id="copy">Copy results</button>
-      <button id="clear">Clear results</button>
-      <span class="small muted" id="copymsg"></span>
+      <label class="field">Words per practice round<select id="setLen"><option>10</option><option>15</option><option>20</option></select></label>
+      <label class="field">Voice speed<select id="setRate"><option value="0.75">Slow</option><option value="0.9">Normal</option><option value="1">Quick</option></select></label>
     </div>
-    <textarea id="dump" readonly hidden aria-label="Results text"></textarea>
+    <button class="primary" id="setSave">Save</button>
+    <hr style="border:none;border-top:1px solid var(--line);width:100%">
+    <h3>This device</h3>
+    <label class="field">Worker URL<input id="setUrl" type="url"></label>
+    <label class="field">Passcode<input id="setPass" type="password" autocomplete="off"></label>
+    <label class="field">Speech model<select id="setModel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select></label>
+    <div class="row"><button id="setDevSave">Save device settings</button><span class="status" id="setMsg"></span></div>
   </section>
 </main>
 
-<script id="core">
-/* ---------- Letter parsing (pure; unit-tested) ---------- */
-const SOUNDS = {
-  a:["a","ay","eh","hey","aye a"], b:["b","be","bee","bea","bae"], c:["c","see","sea","cee","si","she"],
-  d:["d","dee","de","di"], e:["e","ee","ea"], f:["f","ef","eff","effe"], g:["g","gee","jee","ji","ge"],
-  h:["h","aitch","age","ache","eich","hache"], i:["i","eye","ai","aye"], j:["j","jay","jae","jaye"],
-  k:["k","kay","kaye","cay","que"], l:["l","el","elle","ell","al"], m:["m","em","emm"], n:["n","en","enn"],
-  o:["o","oh","owe","ou"], p:["p","pee","pea","pe"], q:["q","queue","cue","kyu","cu"], r:["r","are","ar","arr","our"],
-  s:["s","ess","es","esse"], t:["t","tea","tee","ti","te"], u:["u","you","yu","ewe","yoo"], v:["v","vee","ve","vi"],
-  w:["w","doubleyou","double-u","dublu"], x:["x","ex","ecks","eggs"], y:["y","why","wye","why's"], z:["z","zee","zed","zea"]
-};
-/* Cloud mode (Mode E): Google is already biased toward letters, so only accept the standard letter names.
-   No guessing from look-alike words ("all", "it", "and"...), which caused wrong letters like O -> L. */
-const CLOUD_NAMES = { bee:"b", see:"c", sea:"c", dee:"d", ee:"e", ef:"f", eff:"f", gee:"g", aitch:"h", eye:"i", jay:"j",
-  kay:"k", el:"l", ell:"l", em:"m", en:"n", oh:"o", pee:"p", cue:"q", queue:"q", are:"r", ess:"s", tee:"t", you:"u",
-  vee:"v", ex:"x", why:"y", zee:"z", zed:"z" };
-const TOKEN2LETTER = {};
-for (const [L, arr] of Object.entries(SOUNDS)) for (const s of arr) if (!(s in TOKEN2LETTER)) TOKEN2LETTER[s] = L;
-TOKEN2LETTER["aye"] = "i";
-
-function norm(s){ return s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase(); }
-function targetForms(word){ // "swiveled / swivelled" -> both; strip hyphens/spaces/accents
-  return word.split("/").map(w => norm(w).replace(/[^a-z]/g,"")).filter(Boolean);
-}
-/* Tokens the recognizer writes that could mean more than one thing. First entry is the primary reading. */
-const AMBIG = { in:["n","in"], an:["n","an"], inn:["n","in"], and:["n",""], end:["n"], um:["","m"], am:["m","am"],
-                all:["l"], ole:["l"], it:["t","it"], at:["t","at"], ok:["k","ok"], okay:["k"], is:["s","is"], es:["s"] };
-/* Returns {letters, merged, alts}: letters = primary reading; alts = other readings of ambiguous tokens;
-   merged = a multi-letter word had to be split (recognizer may have auto-corrected the spelling). */
-function parseLetters(transcript, target, opts={}){
-  const forms = targetForms(target);
-  // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
-  const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
-  const fixed = norm(expanded).replace(/\b(double ?u|double ?you)\b/g, " w ").replace(/\b(will you|dub ?ya)\b/g, " willyou ");
-  let toks = fixed.replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
-  // drop the word itself said before/after the letters, as in a real bee
-  const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
-  if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
-  if (toks.length > 1 && isWord(toks[toks.length-1])) toks = toks.slice(0,-1);
-  const pieces = []; let merged = false; const ambiguous = []; const mergedWords = [];
-  for (let i=0;i<toks.length;i++){
-    const t = toks[i].replace(/'s$/,"").replace(/'/g,"");
-    if (!t) continue;
-    if ((t==="double"||t==="dubble") && i+1<toks.length){
-      const nxt = toks[i+1].replace(/'/g,"");
-      if (nxt==="you"||nxt==="u"||nxt==="yu"){ pieces.push(["w"]); i++; continue; }
-      const L = TOKEN2LETTER[nxt] || (nxt.length===1?nxt:null);
-      if (L){ pieces.push([L+L]); i++; continue; }
-    }
-    // "will you" is usually W, but sometimes it swallowed more letters ("w a v e r"): read it as W, and if that
-    // doesn't give the right spelling, call it unclear rather than wrong
-    if (opts.joined){ // cloud mode: letters, standard letter names, or a run of letters Google joined together
-      if (t.length===1){ pieces.push([t]); continue; }
-      if (CLOUD_NAMES[t]){ pieces.push([CLOUD_NAMES[t]]); continue; }
-      if (["hyphen","dash","space","capital","uppercase","uh","um","er"].includes(t)) continue;
-      // Google sometimes writes a letter as its name inside a joined run ("younwavering" for U-N-W...):
-      // keep the raw reading first, plus readings with letter names swapped back to letters
-      merged = true; pieces.push([t, ...nameVariants(t)]); continue;
-    }
-    if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
-    if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
-    if (t.length===1){ pieces.push([t]); continue; }
-    if (AMBIG[t]){ pieces.push(AMBIG[t]); ambiguous.push(t); continue; }
-    if (TOKEN2LETTER[t]){ pieces.push([TOKEN2LETTER[t]]); continue; }
-    // recognizer joined letters into a word (e.g. "tiptoe") — split it, flag lower confidence
-    // in cloud mode Google's letter-sequence class joins spelled letters on purpose ("s c a" -> "sca"): not a word guess
-    merged = true; if (!opts.joined) mergedWords.push(t); pieces.push([t]);
-  }
-  const letters = pieces.map(p=>p[0]).join("");
-  let combos = [""];
-  for (const p of pieces){ const n=[]; for (const c of combos) for (const o of p){ if(n.length<256) n.push(c+o); } combos=n; }
-  const alts = [...new Set(combos)].filter(c=>c!==letters);
-  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined};
-}
-const NAME_SWAPS = [["you","u"],["why","y"],["are","r"],["see","c"],["bee","b"],["tee","t"],["tea","t"],["pee","p"],["jay","j"],
-  ["kay","k"],["eye","i"],["oh","o"],["zee","z"],["dee","d"],["gee","g"],["vee","v"],["cue","q"],["ex","x"],["el","l"],["em","m"],["en","n"]];
-function nameVariants(t){
-  const out = new Set(); let frontier = [t];
-  for (let round=0; round<3 && frontier.length; round++){
-    const next = [];
-    for (const s of frontier) for (const [name, L] of NAME_SWAPS){
-      let i = s.indexOf(name);
-      while (i !== -1 && out.size < 64){ const v = s.slice(0,i)+L+s.slice(i+name.length); if(!out.has(v) && v!==t){ out.add(v); next.push(v); } i = s.indexOf(name, i+1); }
-    }
-    frontier = next;
-  }
-  return [...out];
-}
-/* correct | unsure (only an ambiguous reading matches) | unclear (recognizer heard words, not letters) | wrong */
-function isSubseq(a, b){ let i=0; for (const ch of b){ if (ch===a[i]) i++; } return i===a.length; }
-function verdictFor(p, target, segCount=1){
-  if (!p.letters) return "unclear"; // nothing heard
-  if (isCorrect(p.letters, target)) return "correct";
-  // cloud: a letter name inside a joined run (you->u, why->y...) is Google's formatting, not the kid's spelling
-  if (p.cloud && p.alts.some(a=>isCorrect(a, target))) return "correct";
-  if (p.alts.some(a=>isCorrect(a, target))) return "unsure";
-  // listening restarted mid-word and letters are only missing (never wrong): likely lost in the restart gap
-  if (segCount > 1 && p.letters.length < targetForms(target)[0].length && targetForms(target).some(f=>isSubseq(p.letters, f))) return "unclear";
-  // recognizer turned letters into a real word ("a v e r i n g" -> "Angie"): a hearing problem, not a spelling miss
-  if (p.mergedWords.length) return "unclear";
-  return "wrong";
-}
-function isCorrect(letters, target){ return targetForms(target).includes(letters); }
-
-/* Align heard vs target for letter-by-letter feedback (Levenshtein backtrace). */
-function align(heard, target){
-  const a=heard, b=targetForms(target)[0];
-  const n=a.length, m=b.length, D=[...Array(n+1)].map(()=>Array(m+1).fill(0));
-  for(let i=0;i<=n;i++)D[i][0]=i; for(let j=0;j<=m;j++)D[0][j]=j;
-  for(let i=1;i<=n;i++)for(let j=1;j<=m;j++)D[i][j]=Math.min(D[i-1][j]+1,D[i][j-1]+1,D[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
-  const ops=[]; let i=n,j=m;
-  while(i>0||j>0){
-    if(i>0&&j>0&&D[i][j]===D[i-1][j-1]+(a[i-1]===b[j-1]?0:1)){ops.push({ch:a[i-1],t:a[i-1]===b[j-1]?"m":"x",want:b[j-1]});i--;j--;}
-    else if(i>0&&D[i][j]===D[i-1][j]+1){ops.push({ch:a[i-1],t:"x",want:""});i--;}
-    else {ops.push({ch:"_",t:"gap",want:b[j-1]});j--;}
-  }
-  return ops.reverse();
-}
-/* Lenient check: does ANY combination of recognizer alternatives produce the target? (capped) */
-function anyAltCorrect(segments, target){
-  let combos=[""];
-  for(const alts of segments){
-    const next=[]; for(const c of combos) for(const a of alts){ next.push(c+" "+a); if(next.length>3000) break; }
-    combos=next;
-  }
-  return combos.some(c=>isCorrect(parseLetters(c,target).letters,target));
-}
-
-/* ---------- Bee mode analysis (pure; unit-tested) ----------
-   Two Google passes of the same clip: "plain" finds the spoken word and "start over"; "letters" gives the spelling.
-   Word timestamps line them up: [word] letters [start over] letters ... [word = lock-in]. */
-function tsec(t){ if (t==null) return null; if (typeof t==="number") return t; if (typeof t==="object") return (+t.seconds||0)+(+t.nanos||0)/1e9; const v=parseFloat(String(t)); return isNaN(v)?null:v; }
-function wordsOf(results){
-  const out=[];
-  for (const r of results||[]){
-    const a=(r.alternatives||[])[0]; if(!a) continue;
-    // Google's JSON leaves out a time of exactly 0 (e.g. the first word's startTime), so a missing time inside "words" means 0
-    if (a.words && a.words.length) for (const x of a.words) out.push({w:x.word, s:tsec(x.startTime ?? 0), e:tsec(x.endTime ?? 0)});
-    else for (const t of (a.transcript||"").trim().split(/\s+/).filter(Boolean)) out.push({w:t, s:null, e:null});
-  }
-  return out;
-}
-function lev(a,b){ const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let prev=[...Array(n+1).keys()];
-  for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; } return prev[n]; }
-function clean(w){ return norm(String(w)).replace(/[^a-z]/g,""); }
-/* where the bee word itself was spoken (fuzzy: it only has to be recognizable, pronunciation isn't scored) */
-function findWordHits(words, target){
-  const forms = targetForms(target), hits=[];
-  for (let i=0;i<words.length;i++){
-    for (let len=1; len<=Math.min(3,words.length-i); len++){
-      const parts = words.slice(i,i+len).map(x=>clean(x.w));
-      // a word split by Google ("scaff olding") may be joined, but never swallow single spelled letters
-      if (len>1 && parts.some(x=>x.length<2)) break;
-      const joined = parts.join("");
-      if (joined.length < 2) continue;
-      const ok = forms.some(f => { const tol = f.length<=4?0 : f.length<=7?1 : 2; return lev(joined,f)<=tol; });
-      if (ok){ hits.push({i, j:i+len, s:words[i].s, e:words[i+len-1].e}); i += len-1; break; }
-    }
-  }
-  return hits;
-}
-function findRestarts(words){
-  const hits=[]; const t=words.map(x=>clean(x.w));
-  for (let i=0;i<t.length;i++){
-    if (t[i]==="restart" || t[i]==="startover"){ hits.push({i, j:i+1, s:words[i].s, e:words[i].e}); continue; }
-    if (t[i]==="start"){ for (let k=i+1;k<=Math.min(i+2,t.length-1);k++) if (t[k]==="over"||t[k]==="again"){
-      // swallow "can I / may I" before it
-      let a=i; while (a>0 && i-a<2 && ["can","may","i","could"].includes(t[a-1])) a--;
-      hits.push({i:a, j:k+1, s:words[a].s, e:words[k].e}); i=k; break; } }
-  }
-  return hits;
-}
-/* Google sometimes glues the spoken word onto the letters ("pleatspleats" = p-l-e-a-t-s + "pleats").
-   Split such tokens back apart; the spoken-word piece gets a short slice of the token's time. */
-function splitGlued(words, target){
-  const forms = targetForms(target).filter(f=>f.length>=3), out=[];
-  for (const x of words){
-    let t = clean(x.w), s = x.s, e = x.e;
-    const timed = s!=null && e!=null;
-    const suf = [];
-    // spoken word glued AFTER the letters; the leftover must be about word-length (the spelled letters),
-    // so "younwavering" isn't split into "yo" + "unwavering"
-    for (let guard=0; guard<3; guard++){
-      const f = forms.find(f => t.endsWith(f) && t.length - f.length >= Math.max(2, f.length - 2));
-      if (!f) break;
-      const cut = timed ? e - Math.min(0.9, 0.4*(e-s)) : null;
-      suf.unshift({w:f, s:cut, e}); t = t.slice(0, t.length - f.length); e = cut;
-    }
-    // spoken word glued BEFORE the letters ("tiptoetip" = "tiptoe" + t-i-p)
-    let pre = null;
-    const f2 = forms.find(f => t.startsWith(f) && t.length > f.length);
-    if (f2){ const cut = timed ? s + Math.min(0.9, 0.4*(e-s)) : null; pre = {w:f2, s, e:cut}; t = t.slice(f2.length); s = cut; }
-    if (!pre && !suf.length){ out.push(x); continue; }
-    if (pre) out.push(pre);
-    if (t) out.push({w:t, s, e});
-    out.push(...suf);
-  }
-  return out;
-}
-/* lock-in check on the plain pass alone (used while still recording) */
-function isLockedIn(plainWords, target){
-  plainWords = splitGlued(plainWords, target);
-  const hits = findWordHits(plainWords, target); if (!hits.length) return false;
-  const last = hits[hits.length-1];
-  const fillers = new Set(["um","uh","er","okay","ok"]);
-  const after = plainWords.slice(last.j).filter(x=>!fillers.has(clean(x.w)));
-  if (after.length) return false;
-  const restarts = findRestarts(plainWords);
-  const startIdx = (hits.length>1 && hits[0].i<=1) ? hits[0].j : 0;
-  const lastRestart = restarts.filter(r=>r.j<=last.i).pop();
-  const from = Math.max(startIdx, lastRestart ? lastRestart.j : 0);
-  if ((last.i - from) >= 2) return true;   // some spelling between the opening (or last restart) and the closing word
-  // or Google heard the spelled letters as the word itself: word, word, word
-  return hits.length >= 3 && hits[0].i <= 1 && !(lastRestart && lastRestart.j > hits[hits.length-2].i);
-}
-/* full analysis once recording ends */
-/* where things were said, from the plain pass: opening word, start-overs, closing (lock-in) word, and the spelling windows */
-function beeStructure(plainResults, target, duration){
-  const plain = splitGlued(wordsOf(plainResults), target);
-  const hits = findWordHits(plain, target), restarts = findRestarts(plain);
-  const opening = hits.length && hits[0].i <= 1 && !(hits.length===1 && hits[0].j>=plain.length && plain.length>2) ? hits[0] : null;
-  const lastHit = hits.length ? hits[hits.length-1] : null;
-  const fillers = new Set(["um","uh","er","okay","ok"]);
-  const closing = lastHit && lastHit!==opening && plain.slice(lastHit.j).every(x=>fillers.has(clean(x.w))) ? lastHit : null;
-  const timed = plain.length>0 && plain.every(x=>x.s!=null && x.e!=null);
-  const windows = [];
-  if (timed){
-    let t0 = opening ? opening.e : 0;
-    for (const r of restarts){
-      if (r.s > t0 && (!closing || r.s < closing.s)){
-        windows.push([t0, r.s]); t0 = r.e;
-        // spellers often say the word again after "start over": skip it so it isn't read as letters
-        // (but Google may also write the spelled letters as the word: only skip it if it's too short to be
-        //  letters being spelled, about 0.3 s + 0.15 s per letter)
-        const again = hits.find(hh => hh.i === r.j && hh !== closing);
-        if (again && (again.e - again.s) < 0.3 + 0.15 * targetForms(target)[0].length) t0 = again.e;
-      }
-    }
-    windows.push([t0, closing ? closing.s : (duration || 1e9)]);
-  }
-  return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
-}
-/* score the spelling attempts (one text per window; the last one is the answer) */
-function scoreBee(attemptTexts, target, strict, st, notes){
-  // after a start-over, the cut can catch the tail of "start over"; no bee word on the list starts with these
-  attemptTexts = attemptTexts.map((a,k) => k===0 ? a : a.replace(/^\s*(?:(?:start|over|again|restart)\b\s*)+/i, "").replace(/^\s*(over|again)(?=[a-z]{2,})/i, ""));
-  const parsed = attemptTexts.map(a => { const words = splitGlued(a.split(/\s+/).filter(Boolean).map(w=>({w, s:null, e:null})), target);
-    return parseLetters(words.map(x=>x.w).join(" "), target, {joined:true}); });
-  const finalP = parsed[parsed.length-1] || {letters:"", alts:[], mergedWords:[], cloud:true};
-  let verdict = verdictFor(finalP, target);
-  let finalLetters = finalP.letters;
-  if (verdict==="correct" && !isCorrect(finalLetters, target)) finalLetters = finalP.alts.find(a=>isCorrect(a,target)) || finalLetters;
-  // Scripps: after starting over, the letters already said can't change
-  let violation = null;
-  if (strict){
-    for (let k=0;k+1<parsed.length;k++){
-      const prev = parsed[k].letters, next = k+1===parsed.length-1 ? finalLetters : parsed[k+1].letters;
-      if (prev && !next.startsWith(prev)){ violation = {before:prev, after:next}; break; }
-    }
-    if (violation && verdict==="correct") verdict = "wrong";
-  }
-  if (!st.opening && strict) notes.push("Remember to say the word before spelling it.");
-  return { attempts: parsed.map(p=>p.letters), final: finalLetters, verdict, opening: !!st.opening, locked: !!st.closing,
-           restarts: st.restarts.length, violation, notes, plainText: st.plainText, timed: st.timed };
-}
-/* preferred: letters transcribed separately for each window of audio (letterTexts[i] for st.windows[i]) */
-function analyzeBeeWindows(st, letterTexts, target, strict){ return scoreBee(letterTexts, target, strict, st, []); }
-/* fallback: one letter pass over the whole recording, split by word timestamps if Google gave them */
-function analyzeBee(plainResults, letterResults, target, strict){
-  const st = beeStructure(plainResults, target);
-  const letters = splitGlued(wordsOf(letterResults), target);
-  const notes = [];
-  let attempts;
-  if (st.timed && letters.length && letters.every(x=>x.s!=null)){
-    attempts = st.windows.map(([a,b]) => letters.filter(x => { const mid=(x.s+x.e)/2; return mid>a && mid<b; }).map(x=>x.w).join(" "));
-  } else {
-    attempts = [letters.map(x=>x.w).join(" ")];
-    if (st.restarts.length) notes.push("No timing from Google, so start-over couldn't be placed; scored the whole recording.");
-  }
-  return scoreBee(attempts, target, strict, st, notes);
-}
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf};
-</script>
-
-<script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
+<script src="words.js"></script>
+<script src="core.js"></script>
 <script>
-/* Version shown at the top so you can tell a reload picked up the latest page. Bump with every change. */
-const APP_VERSION = "20";
-const APP_BUILT = "Oct 10, 3:05 PM";
-let workerVersion = null;
-function noteWorker(d){
-  workerVersion = d.version || "2 or older";
-  const el = document.getElementById("wver"); if (!el) return;
-  el.textContent = "Worker v" + workerVersion; el.className = "pill " + (d.version ? "ok" : "no");
-}
-const SETS = {
-  g2:["tiptoe","pudding","beets","invent","globe","badly","maple","splinter","pimple","tabby"],
-  g4:["pleats","despair","obtain","scaffolding","unwavering","captivity","dwelling","spectators","griddle","Borneo"]
-};
+"use strict";
+/* ================= basics ================= */
+const APP_VERSION = "1.0";
+const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
+const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
+const DAY = 86400000;
+const BOX_DAYS = [0, 1, 2, 4, 7, 14];         // how long until a word comes back, by level
+const MASTERED = 3;                          // level counted as "mastered"
 const $ = id => document.getElementById(id);
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let results = load(); let idx = 0; let rec = null; let listening = false;
-let segments = []; // array of arrays of alternative transcripts (final)
-let interim = ""; let current = null;
-
-function load(){ try{ return JSON.parse(localStorage.getItem("micTestResults")||"[]"); }catch(e){ return []; } }
-function save(){ try{ localStorage.setItem("micTestResults", JSON.stringify(results)); }catch(e){} }
-function words(){ return SETS[$("set").value]; }
-function word(){ return words()[idx]; }
-
-/* ---------- Device check ---------- */
-async function diag(){
-  const rows = [];
-  rows.push(["Secure (HTTPS) page", window.isSecureContext, window.isSecureContext?"Yes":"No: open the https:// link"]);
-  const silk = /Silk\//.test(navigator.userAgent);
-  rows.push(["Browser speech recognition (Mode A)", silk?false:!!SR, silk?"Not usable in Silk: use Mode C":SR?"Present (may still fail)":"No: use Mode C"]);
-  rows.push(["On-device recognition (Mode C)", !!(window.WebAssembly && window.Worker && navigator.mediaDevices && window.indexedDB), (window.WebAssembly && navigator.mediaDevices)?"Supported":"Not supported"]);
-  rows.push(["Text-to-speech voice", "speechSynthesis" in window, ("speechSynthesis" in window)?"Yes":"No"]);
-  let mic = "wait", micTxt = "Asked when you tap Start";
-  try{ const p = await navigator.permissions.query({name:"microphone"}); mic = p.state==="granted"?true:p.state==="denied"?false:"wait";
-       micTxt = p.state==="granted"?"Allowed":p.state==="denied"?"Blocked: allow mic in Chrome site settings":"Asked when you tap Start"; }catch(e){}
-  rows.push(["Microphone permission", mic, micTxt]);
-  rows.push(["Browser", "info", navigator.userAgent.match(/(Silk|Chrome|CriOS|Firefox|Safari|Edg)\/[\d.]+/)?.[0] || "unknown"]);
-  $("diag").innerHTML = "";
-  for (const [k, ok, txt] of rows){
-    const d=document.createElement("div"); const s=document.createElement("span"); s.textContent=k;
-    const p=document.createElement("span"); p.className="pill "+(ok===true?"ok":ok===false?"no":"wait"); p.textContent=txt;
-    d.append(s,p); $("diag").append(d);
-  }
-}
-
-/* ---------- Speech out ---------- */
-function say(text){
-  if(!("speechSynthesis" in window)) return;
-  speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang="en-US"; u.rate=0.85; speechSynthesis.speak(u);
-}
-
-/* ---------- Speech in ---------- */
-/* Mode D: Chrome's on-device recognizer with "contextual biasing" toward letter names (newer Chrome only) */
-const LOCAL_OPTS = { langs:["en-US"], processLocally:true };
-let noPhrases = false, rebuild = false;
-function letterPhrases(){
-  if (noPhrases || !window.SpeechRecognitionPhrase) return null;
-  return "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map(L => new SpeechRecognitionPhrase(L, 8.0));
-}
-async function localStatus(){
-  try{
-    if (SR && SR.available) return await SR.available(LOCAL_OPTS);
-    if (SR && SR.availableOnDevice) return await SR.availableOnDevice("en-US");
-  }catch(e){ return "error: "+(e.message||e); }
-  return "not in this Chrome";
-}
-async function ensureLocal(){
-  let s = await localStatus();
-  if (s==="downloadable" || s==="downloading"){
-    voskStatus("Downloading Chrome's on-device speech pack…", "wait");
-    try{ if (SR.install) await SR.install(LOCAL_OPTS); else if (SR.installOnDevice) await SR.installOnDevice("en-US"); }catch(e){}
-    s = await localStatus();
-  }
-  voskStatus(s==="available" ? ("On-device ready" + (window.SpeechRecognitionPhrase&&!noPhrases ? ", letter boost on" : ", letter boost not supported")) : "On-device not available: "+s, s==="available"?"ok":"no");
-  return s==="available";
-}
-function makeRec(continuous, local){
-  const r = new SR(); r.lang="en-US"; r.interimResults=true; r.maxAlternatives=5; r.continuous=continuous;
-  if (local){ try{ r.processLocally = true; const ph = letterPhrases(); if (ph) r.phrases = ph; }catch(e){ noPhrases = true; } }
-  r.onaudiostart = () => { micLive = true; render(); };
-  r.onresult = e => {
-    if (continuous){
-      // rebuild from the full result list; collapse Android's cumulative duplicates
-      const fin=[]; let inter="";
-      for (let i=0;i<e.results.length;i++){
-        const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
-        if(res.isFinal){
-          if(!alts[0]) continue; // Android sends empty finals around restarts
-          const prev=fin[fin.length-1];
-          if(prev && alts[0].startsWith(prev[0])) fin[fin.length-1]=alts; else fin.push(alts);
-        } else inter += " "+alts[0];
-      }
-      segments = baseSegments.concat(fin); interim = inter;
-    } else {
-      interim="";
-      for (let i=e.resultIndex;i<e.results.length;i++){
-        const res=e.results[i]; const alts=[...res].map(a=>a.transcript.trim());
-        if(res.isFinal){ if(alts[0]) segments.push(alts); } else interim += " "+alts[0];
-      }
-    }
-    render();
-  };
-  r.onerror = e => {
-    lastError = e.error;
-    if (e.error==="phrases-not-supported"){ noPhrases = true; rebuild = true; voskStatus("Letter boost not supported here; listening without it", "wait"); return; }
-    if(e.error==="not-allowed"||e.error==="service-not-allowed"||e.error==="language-not-supported"){ listening=false; }
-    render(); diag(); };
-  r.onend = () => {
-    micLive = false;
-    // Android sometimes ends a session without finalizing the last words: keep them instead of dropping them
-    if (interim.trim()){ segments.push([interim.trim()]); interim=""; }
-    if(!listening){ finishOnce(); return; }
-    baseSegments = segments.slice();
-    if (rebuild){ rebuild=false; rec = makeRec(continuous, local); try{ rec.start(); }catch(err){} return; }
-    try{ r.start(); }catch(err){} };
-  return r;
-}
-let baseSegments = []; let lastError = "";
-
-/* ---------- Mode C: on-device recognizer (Vosk, letters-only grammar) ---------- */
-// absolute URL: the library resolves relative paths from its worker, which drops the /spelling-bee/ folder
-const MODEL_URL = new URL("vosk-model-small-en-us-0.15.tar.gz", location.href).href;
-const GRAMMAR = JSON.stringify([
-  ..."abcdefghijklmnopqrstuvwxyz".split(""),
-  "bee","see","why","you","are","oh","eye","tea","pee","jay","kay","el","em","en","ex","zee","gee","dee","vee","double","hyphen","[unk]"
-]);
-const V = { model:null, loading:null, rec:null, ctx:null, stream:null, node:null, src:null };
-function voskStatus(txt, cls){ const s=$("voskstatus"); s.textContent=txt; s.className="pill "+cls; }
-function loadVosk(){
-  if (V.model) return Promise.resolve(V.model);
-  if (V.loading) return V.loading;
-  if (!window.Vosk){ voskStatus("Speech library didn't load. Check the internet connection and reload.", "no"); return Promise.reject(new Error("no Vosk")); }
-  const t0 = performance.now();
-  voskStatus("Loading speech model (first time downloads about 40 MB)…", "wait");
-  V.loading = Promise.race([
-    Vosk.createModel(MODEL_URL),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error("timed out after 4 minutes")), 240000))
-  ]).then(m => { V.model=m; voskStatus(`Speech model ready (${((performance.now()-t0)/1000).toFixed(0)} s)`, "ok"); render(); return m; })
-    .catch(e => { V.loading=null; voskStatus("Speech model failed: "+(e && e.message || e), "no"); throw e; });
-  return V.loading;
-}
-async function startVosk(){
-  let model; try{ model = await loadVosk(); }catch(e){ listening=false; render(); return; }
-  try{
-    V.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
-  }catch(e){ lastError = "microphone: "+(e.name||e); listening=false; render(); diag(); return; }
-  V.ctx = new (window.AudioContext||window.webkitAudioContext)();
-  V.rec = new model.KaldiRecognizer(V.ctx.sampleRate, GRAMMAR);
-  V.rec.setWords(true);
-  V.rec.on("result", m => { const r=m.result||{}; if(r.text){ segments.push([r.text]); (V.confs ||= []).push(...(r.result||[]).map(w=>[w.word, +w.conf.toFixed(2)])); } interim=""; render(); });
-  V.rec.on("partialresult", m => { interim = (m.result && m.result.partial) || ""; render(); });
-  V.src = V.ctx.createMediaStreamSource(V.stream);
-  V.node = V.ctx.createScriptProcessor(4096,1,1);
-  V.node.onaudioprocess = e => {
-    try{ V.rec.acceptWaveform(e.inputBuffer); }catch(err){ lastError=String(err); }
-    const d=e.inputBuffer.getChannelData(0); let s=0; for(let i=0;i<d.length;i+=16) s+=d[i]*d[i];
-    $("level").style.width = Math.min(100, Math.sqrt(s/(d.length/16))*400)+"%";
-  };
-  V.src.connect(V.node); V.node.connect(V.ctx.destination);
-  render();
-}
-function stopVosk(){
-  try{ V.rec && V.rec.retrieveFinalResult(); }catch(e){}
-  setTimeout(() => {
-    try{ V.node && V.node.disconnect(); V.src && V.src.disconnect(); }catch(e){}
-    try{ V.stream && V.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-    try{ V.ctx && V.ctx.close(); }catch(e){}
-    try{ V.rec && V.rec.remove(); }catch(e){}
-    $("level").style.width="0";
-    if (interim && !segments.length) segments.push([interim]);
-    interim=""; finish();
-  }, 900);
-}
-
-/* ---------- Mode E: record the whole spelling, then transcribe with Google Cloud (via your Cloudflare Worker) ---------- */
-const C = { rec:null, stream:null, chunks:[], ctx:null, node:null, cancel:false };
-let busy = false;
-function getCloud(){ try{ return { url: localStorage.getItem("cloudUrl")||"", pass: localStorage.getItem("cloudPass")||"", model: localStorage.getItem("cloudModel")||"default" }; }catch(e){ return {url:"",pass:"",model:"default"}; } }
-function cloudReady(){
-  const c = getCloud(); $("cloudurl").value=c.url; $("cloudpass").value=c.pass; $("cloudmodel").value=c.model;
-  if (!window.MediaRecorder){ voskStatus("This browser can't record audio", "no"); return false; }
-  if (!c.url || !c.pass){ voskStatus("Enter the Worker URL and passcode, then Save", "wait"); return false; }
-  voskStatus("Cloud ready", "ok"); return true;
-}
-$("cloudsave").onclick = () => {
-  try{ localStorage.setItem("cloudUrl", $("cloudurl").value.trim().replace(/\/+$/,"")); localStorage.setItem("cloudPass", $("cloudpass").value); localStorage.setItem("cloudModel", $("cloudmodel").value); }catch(e){}
-  cloudReady();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const WORD_BY = new Map(WORDS.map(x => [x.w.toLowerCase(), x]));
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-async function startCloud(){
-  if (!cloudReady()){ listening=false; render(); return; }
-  try{ C.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); }
-  catch(e){ lastError="microphone: "+(e.name||e); listening=false; render(); return; }
-  const type = ["audio/webm;codecs=opus","audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-  C.chunks=[]; C.cancel=false;
-  C.rec = new MediaRecorder(C.stream, type?{mimeType:type}:undefined);
-  C.rec.ondataavailable = e => { if (e.data && e.data.size) C.chunks.push(e.data); };
-  C.rec.onstop = sendCloud;
-  C.rec.start(250);
-  // level meter so the kid can see the mic hears them
-  try{
-    C.ctx = new (window.AudioContext||window.webkitAudioContext)();
-    const src = C.ctx.createMediaStreamSource(C.stream); C.node = C.ctx.createAnalyser(); C.node.fftSize=1024; src.connect(C.node);
-    const buf = new Float32Array(C.node.fftSize);
-    const tick = () => { if(!C.node) return; C.node.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; $("level").style.width=Math.min(100,Math.sqrt(s/buf.length)*400)+"%"; requestAnimationFrame(tick); };
-    tick();
-  }catch(e){}
-  voskStatus("Recording. Tap Done when finished", "ok");
-  render();
-}
-function stopCloud(){
-  try{ C.rec && C.rec.state!=="inactive" && C.rec.stop(); }catch(e){}
-  try{ C.stream && C.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-  try{ C.ctx && C.ctx.close(); }catch(e){}
-  C.node=null; $("level").style.width="0";
-}
-async function sendCloud(){
-  const recd = C.rec; C.rec=null;
-  if (C.cancel){ C.chunks=[]; return; }
-  const blob = new Blob(C.chunks, {type: (recd && recd.mimeType) || "audio/webm"}); C.chunks=[];
-  const c = getCloud();
-  busy = true; voskStatus(`Sending ${(blob.size/1024).toFixed(0)} KB to Google…`, "wait"); render();
-  const t0 = performance.now();
-  try{
-    const r = await fetch(`${c.url}/?m=${encodeURIComponent(c.model)}`, { method:"POST", headers:{ "X-Passcode": c.pass, "Content-Type": blob.type }, body: blob });
-    const data = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
-    if (!data.error) noteWorker(data);
-    if (!r.ok || data.error){
-      lastError = (data.error && (data.error.message || data.error)) || ("HTTP "+r.status);
-      voskStatus("Cloud error: "+String(lastError).slice(0,140), "no");
-    } else {
-      segments = (data.results||[]).map(x => (x.alternatives||[]).map(a => (a.transcript||"").trim()).filter(Boolean)).filter(a=>a.length);
-      voskStatus(`Answer in ${((performance.now()-t0)/1000).toFixed(1)} s` + (data.classFallback?" (letter mode not accepted, used plain mode)":""), "ok");
-    }
-  }catch(e){ lastError = "network: "+(e.message||e); voskStatus("Couldn't reach the Worker: "+(e.message||e), "no"); }
-  busy = false; finished = false; finishOnce();
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+let cfg = store.get("sb.cfg", null);          // {url, pass, model}
+let kidId = store.get("sb.kid", null);
+let doc = null;                                // {profile, attempts}
+const views = ["setup","kids","home","play","stats","settings"];
+function show(v){ for (const x of views) $("v-"+x).hidden = x !== v; window.scrollTo(0,0); }
+
+function countdown(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = Math.round((BEE_DAY - today) / DAY);
+  $("countdown").textContent = d > 1 ? `Classroom bee in ${d} days (Wed, Nov 11) · finals Fri, Nov 13`
+    : d === 1 ? "Classroom bee is tomorrow!" : d === 0 ? "Classroom bee is today. You've got this!" : "Bee season wrap-up";
 }
 
-/* ---------- Bee mode: say the word, spell it, say the word again (lock-in). "Start over" restarts the spelling. ----------
-   Audio is captured as raw samples so the app can cut out just the spelling and send that part for letter recognition. */
-const B = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, checking:false, lastSpeech:0,
-            speechSinceCheck:false, startedAt:0, floor:1, promptShown:false, stopping:false, cancelled:false };
-async function postClip(blob, pass, w, enc){
-  const c = getCloud();
-  const q = `pass=${pass}&m=${encodeURIComponent(c.model)}${w?`&w=${encodeURIComponent(w)}`:""}${enc?`&enc=${enc}`:""}`;
-  const r = await fetch(`${c.url}/?${q}`, { method:"POST", headers:{ "X-Passcode":c.pass, "Content-Type":blob.type || "application/octet-stream" }, body:blob });
-  const d = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
-  if (!r.ok || d.error) throw new Error((d.error && (d.error.message||d.error)) || ("HTTP "+r.status));
-  noteWorker(d);
+/* ================= words, pages, levels ================= */
+const PAGES = [2,3,4,5,6,7,8];
+const pageWords = p => WORDS.filter(x => x.g === p || x.g === p + 1);
+function pool(){ const ps = (doc && doc.profile.pages) || [2]; const seen = new Set(); const out = [];
+  for (const p of ps) for (const x of pageWords(p)) if (!seen.has(x.w)) { seen.add(x.w); out.push(x); } return out; }
+function stats(d){                                 // per-word history, replayed in time order
+  const m = new Map();
+  const list = (d.attempts || []).filter(a => !a.x).sort((a,b) => a.t - b.t);
+  for (const a of list){
+    const s = m.get(a.w) || { n:0, ok:0, miss:0, box:0, last:0, streak:0, wrong:[] };
+    s.n++; s.last = a.t;
+    if (a.ok){ s.ok++; s.streak++; s.box = Math.min(5, s.box + 1); }
+    else { s.miss++; s.streak = 0; s.box = 0; if (a.h) s.wrong.push(a.h); }
+    m.set(a.w, s);
+  }
+  return m;
+}
+const isDue = (s, now) => !s || now - s.last >= BOX_DAYS[s.box] * DAY;
+
+/* ================= profile + sync ================= */
+function newDoc(name, pages){ return { profile:{ id: uid(), name, pages, len:10, rate:0.9, updatedAt: Date.now() }, attempts: [] }; }
+function saveLocal(){ if (doc) store.set("sb.doc."+doc.profile.id, doc); }
+function mergeDoc(a, b){
+  const byId = new Map();
+  for (const x of [...(a.attempts||[]), ...(b.attempts||[])]){ if (!x || !x.id) continue;
+    const p = byId.get(x.id); if (!p || (x.u||x.t||0) >= (p.u||p.t||0)) byId.set(x.id, x); }
+  const pa = a.profile, pb = b.profile;
+  return { profile: !pa ? pb : !pb ? pa : ((pb.updatedAt||0) >= (pa.updatedAt||0) ? pb : pa), attempts: [...byId.values()].sort((p,q)=>p.t-q.t) };
+}
+async function api(path, opts={}){
+  const r = await fetch(cfg.url + path, { ...opts, headers: { "X-Passcode": cfg.pass, ...(opts.headers||{}) } });
+  const d = await r.json().catch(() => ({ error: "Worker returned non-JSON (status "+r.status+")" }));
+  if (!r.ok || d.error) throw new Error((d.error && (d.error.message || d.error)) || ("HTTP " + r.status));
   return d;
 }
-function pcmDuration(){ let n=0; for (const a of B.pcm) n+=a.length; return n / B.rate; }
-/* samples between t0..t1 seconds, averaged down to 16 kHz, as 16-bit PCM (what Google calls LINEAR16) */
-function pcmClip(t0, t1){
-  let n=0; for (const a of B.pcm) n+=a.length;
-  const all = new Float32Array(n); let o=0; for (const a of B.pcm){ all.set(a, o); o+=a.length; }
-  const i0 = Math.max(0, Math.floor(t0*B.rate)), i1 = Math.min(n, Math.ceil(t1*B.rate));
-  const ratio = B.rate/16000, len = Math.max(0, Math.floor((i1-i0)/ratio));
-  const out = new Int16Array(len);
-  for (let k=0;k<len;k++){
-    const a = i0 + Math.floor(k*ratio), b = Math.min(i1, i0 + Math.floor((k+1)*ratio));
-    let s=0; for (let i=a;i<b;i++) s+=all[i]; const v = Math.max(-1, Math.min(1, s/Math.max(1,b-a)));
-    out[k] = v<0 ? v*0x8000 : v*0x7fff;
-  }
-  return new Blob([out.buffer], {type:"application/octet-stream"});
-}
-async function startBee(){
-  if (!cloudReady()){ listening=false; render(); return; }
-  try{ B.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); }
-  catch(e){ lastError="microphone: "+(e.name||e); listening=false; render(); return; }
-  Object.assign(B, { active:true, pcm:[], checking:false, lastSpeech:0, speechSinceCheck:false, startedAt:performance.now(),
-                     floor:1, promptShown:false, stopping:false, cancelled:false });
-  B.ctx = new (window.AudioContext||window.webkitAudioContext)();
-  try{ await B.ctx.resume(); }catch(e){}
-  B.rate = B.ctx.sampleRate;
-  const src = B.ctx.createMediaStreamSource(B.stream);
-  B.an = B.ctx.createAnalyser(); B.an.fftSize = 1024; src.connect(B.an);
-  B.sp = B.ctx.createScriptProcessor(4096, 1, 1);
-  B.sp.onaudioprocess = e => { if (B.active && !B.stopping) B.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-  src.connect(B.sp); B.sp.connect(B.ctx.destination);
-  B.buf = new Float32Array(B.an.fftSize);
-  voskStatus("Say the word, spell it, then say the word again", "ok");
-  B.timer = setInterval(beeTick, 100);
-  render();
-}
-function beeTick(){
-  if (!B.an) return;
-  B.an.getFloatTimeDomainData(B.buf); let s=0; for (const v of B.buf) s+=v*v; const rms=Math.sqrt(s/B.buf.length);
-  $("level").style.width = Math.min(100, rms*400)+"%";
-  const now = performance.now();
-  B.floor = Math.min(B.floor + 0.0002, Math.max(rms, 0.001));          // background noise estimate
-  if (rms > Math.max(0.02, B.floor*3)){ B.lastSpeech = now; B.speechSinceCheck = true; }
-  if (now - B.startedAt > 55000){ finishBee("time"); return; }          // Google's limit is 60 s per clip
-  if (B.speechSinceCheck && B.lastSpeech && now - B.lastSpeech > 1400 && !B.checking) checkLock();
-  if (!B.promptShown && B.lastSpeech && now - B.lastSpeech > 5000 && !B.checking){
-    B.promptShown = true; voskStatus("Say the word again to lock in your spelling, or say “start over”", "wait");
-  }
-}
-async function checkLock(){
-  B.checking = true; B.speechSinceCheck = false;
+let syncTimer = null;
+function setSync(txt, cls){ const el = $("syncState"); el.textContent = txt; el.className = "pill " + (cls||"plain"); }
+function queueSync(){ clearTimeout(syncTimer); setSync("Saving…"); syncTimer = setTimeout(syncNow, 2000); }
+async function syncNow(){
+  if (!doc) return;
   try{
-    const dur = pcmDuration();
-    const d = await postClip(pcmClip(Math.max(0, dur-12), dur), "plain", word(), "pcm");   // the last 12 s is enough to see the ending
-    if (!listening || B.stopping) { B.checking=false; return; }
-    if (isLockedIn(wordsOf(d.results), word())){ B.checking=false; finishBee("locked"); return; }
-    if (!B.promptShown) voskStatus("Listening…", "ok");
-  }catch(e){ voskStatus("Cloud error: "+String(e.message||e).slice(0,140), "no"); }
-  B.checking = false;
+    const merged = await api("/sync?kid=" + encodeURIComponent(doc.profile.id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(doc) });
+    doc = mergeDoc(doc, merged); saveLocal(); setSync("Saved ✓", "ok");
+  }catch(e){ setSync("Offline: will save later", "no"); }
 }
-function releaseBeeMic(){
-  clearInterval(B.timer); B.timer=null;
-  try{ B.sp && B.sp.disconnect(); }catch(e){}
-  try{ B.stream && B.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-  try{ B.ctx && B.ctx.close(); }catch(e){}
-  B.an=null; B.sp=null; $("level").style.width="0";
+async function pullKid(id){
+  const local = store.get("sb.doc."+id, null);
+  try{ const remote = await api("/sync?kid=" + encodeURIComponent(id)); doc = mergeDoc(local || {profile:null, attempts:[]}, remote); }
+  catch(e){ doc = local; }
+  if (doc && doc.profile) saveLocal();
 }
-function cancelBee(){ B.cancelled=true; B.active=false; releaseBeeMic(); }
-async function finishBee(reason){
-  if (B.stopping || !B.active) return;
-  B.stopping = true; listening = false; busy = true; render();
-  const dur = pcmDuration();
-  releaseBeeMic(); B.active = false;
-  if (B.cancelled){ busy=false; B.stopping=false; render(); return; }
-  const w = word();
-  voskStatus(reason==="locked" ? "Locked in. Scoring…" : "Scoring…", "wait");
-  const t0 = performance.now();
+
+/* ================= speech output ================= */
+let voice = null;
+function pickVoice(){ const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
+  voice = vs.find(v => /en[-_]US/i.test(v.lang) && /samantha|google|natural|aria|jenny/i.test(v.name)) || vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; }
+if (window.speechSynthesis){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function say(text, rate){
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (voice) u.voice = voice;
+  u.rate = rate || (doc && doc.profile.rate) || 0.9; speechSynthesis.speak(u);
+}
+const spellOut = w => targetForms(w)[0].split("").join(", ");
+
+/* ================= microphone: raw samples + silence detection ================= */
+const R = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, lastSpeech:0, heard:false, floor:1, startedAt:0, onTick:null, buf:null };
+async function recStart(onTick){
+  R.stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, channelCount:1 } });
+  R.ctx = new (window.AudioContext || window.webkitAudioContext)(); try{ await R.ctx.resume(); }catch(e){}
+  R.rate = R.ctx.sampleRate; R.pcm = []; R.lastSpeech = 0; R.heard = false; R.floor = 1; R.startedAt = performance.now(); R.onTick = onTick; R.active = true;
+  const src = R.ctx.createMediaStreamSource(R.stream);
+  R.an = R.ctx.createAnalyser(); R.an.fftSize = 1024; src.connect(R.an); R.buf = new Float32Array(R.an.fftSize);
+  R.sp = R.ctx.createScriptProcessor(4096, 1, 1);
+  R.sp.onaudioprocess = e => { if (R.active) R.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  src.connect(R.sp); R.sp.connect(R.ctx.destination);
+  R.timer = setInterval(() => {
+    if (!R.an) return;
+    R.an.getFloatTimeDomainData(R.buf); let s = 0; for (const v of R.buf) s += v*v; const rms = Math.sqrt(s / R.buf.length);
+    $("level").style.width = Math.min(100, rms*400) + "%";
+    R.floor = Math.min(R.floor + 0.0002, Math.max(rms, 0.001));
+    const now = performance.now();
+    if (rms > Math.max(0.02, R.floor*3)){ R.lastSpeech = now; R.heard = true; }
+    if (R.onTick) R.onTick(now);
+  }, 100);
+}
+function recDuration(){ let n = 0; for (const a of R.pcm) n += a.length; return n / R.rate; }
+function recClip(t0, t1){                     // 16 kHz, 16-bit PCM between t0..t1 seconds
+  let n = 0; for (const a of R.pcm) n += a.length;
+  const all = new Float32Array(n); let o = 0; for (const a of R.pcm){ all.set(a, o); o += a.length; }
+  const i0 = Math.max(0, Math.floor(t0*R.rate)), i1 = Math.min(n, Math.ceil(t1*R.rate));
+  const ratio = R.rate/16000, len = Math.max(0, Math.floor((i1-i0)/ratio)), out = new Int16Array(len);
+  for (let k = 0; k < len; k++){ const a = i0 + Math.floor(k*ratio), b = Math.min(i1, i0 + Math.floor((k+1)*ratio));
+    let s = 0; for (let i = a; i < b; i++) s += all[i]; const v = Math.max(-1, Math.min(1, s/Math.max(1, b-a))); out[k] = v < 0 ? v*0x8000 : v*0x7fff; }
+  return new Blob([out.buffer], { type:"application/octet-stream" });
+}
+function recStop(){
+  R.active = false; clearInterval(R.timer); R.timer = null;
+  try{ R.sp && R.sp.disconnect(); }catch(e){} try{ R.stream && R.stream.getTracks().forEach(t => t.stop()); }catch(e){} try{ R.ctx && R.ctx.close(); }catch(e){}
+  R.an = null; R.sp = null; $("level").style.width = "0";
+}
+async function transcribe(blob, pass, w){
+  const q = `pass=${pass}&enc=pcm&m=${encodeURIComponent(cfg.model || "default")}${w ? "&w=" + encodeURIComponent(w) : ""}`;
+  return api("/speech?" + q, { method:"POST", headers:{ "Content-Type":"application/octet-stream" }, body: blob });
+}
+const textOf = d => wordsOf(d.results).map(t => t.w).join(" ");
+document.addEventListener("visibilitychange", () => { if (document.hidden && R.active){ recStop(); if (round) cancelListening("Paused while the app was in the background."); } });
+
+/* ================= rounds ================= */
+let round = null;   // {mode, list, i, asked:Set, results:[], current, reask:[], len, phase}
+function wordForPractice(r){
+  const now = Date.now(), st = stats(doc), p = pool();
+  const ready = r.reask.findIndex(x => r.asked.length - x.at >= 3);   // missed word comes back after 3 others
+  if (ready >= 0) return WORD_BY.get(r.reask.splice(ready, 1)[0].w);
+  if (r.firsts >= r.len) return r.reask.length ? WORD_BY.get(r.reask.shift().w) : null;
+  const notAsked = p.filter(x => !r.asked.includes(x.w));
+  const due = notAsked.filter(x => st.has(x.w) && isDue(st.get(x.w), now))
+    .sort((a,b) => { const A = st.get(a.w), B = st.get(b.w); return A.box - B.box || B.miss - A.miss || A.last - B.last; });
+  const fresh = notAsked.filter(x => !st.has(x.w));
+  const rest = notAsked.filter(x => st.has(x.w) && !isDue(st.get(x.w), now)).sort((a,b) => st.get(a.w).last - st.get(b.w).last);
+  // mostly due words, mixed with a few new ones so the list keeps moving
+  const pickNew = fresh.length && (!due.length || r.firsts % 3 === 2);
+  const w = pickNew ? fresh[0] : (due[0] || fresh[0] || rest[0]);
+  if (w) r.firsts++;
+  return w || null;
+}
+function reviewList(){
+  const st = stats(doc), cutoff = Date.now() - 14*DAY;
+  return pool().filter(x => { const s = st.get(x.w); return s && s.miss && (s.box <= 1 || s.last >= cutoff); })
+    .sort((a,b) => st.get(b.w).miss - st.get(a.w).miss).slice(0, 15);
+}
+function startRound(mode){
+  round = { mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null };
+  if (mode === "review"){ round.list = reviewList(); round.len = round.list.length; }
+  if (mode === "bee"){ round.list = pool().slice().sort(() => Math.random() - 0.5); round.len = round.list.length; }
+  if (mode === "review" && !round.list.length){ alertHome("No misses to review yet. Nice!"); return; }
+  $("playTitle").textContent = mode === "bee" ? "Bee simulation" : mode === "review" ? "Review my misses" : "Practice";
+  $("playHint").textContent = mode === "bee"
+    ? "Say the word, spell it, then say the word again to lock it in. You may say “can I start over”, but the letters you already said can't change."
+    : "Spell the word out loud, one letter at a time. It checks when you stop talking, or tap Done.";
+  $("restartBtn").hidden = true; $("typeToggle").hidden = mode === "bee"; $("typeBox").hidden = true;
+  show("play"); nextWord();
+}
+function alertHome(msg){ show("home"); renderHome(); $("practiceSub").textContent = msg; }
+function nextWord(){
+  let w;
+  if (round.mode === "practice") w = wordForPractice(round);
+  else if (round.mode === "review"){ const ready = round.reask.findIndex(x => round.asked.length - x.at >= 3);
+    w = ready >= 0 ? WORD_BY.get(round.reask.splice(ready,1)[0].w) : (round.list.find(x => !round.asked.includes(x.w)) || (round.reask.length ? WORD_BY.get(round.reask.shift().w) : null)); }
+  else w = round.list.find(x => !round.asked.includes(x.w)) || null;
+  if (!w) return finishRound();
+  round.current = w; round.asked.push(w.w); round.attemptId = null;
+  $("resultArea").hidden = true; $("summaryArea").hidden = true; $("spellArea").hidden = false; $("asks").hidden = false;
+  $("typeIn").value = ""; setMic("idle"); renderDots();
+  setTimeout(() => say(w.w), 250);
+}
+function renderDots(){
+  const el = $("dots"); el.innerHTML = "";
+  const n = round.mode === "bee" ? Math.min(round.results.length + 1, 40) : Math.max(round.len, round.results.length + 1);
+  for (let i = 0; i < n; i++){ const d = document.createElement("i"); const r = round.results[i];
+    d.className = r ? (r.ok ? "ok" : "no") : (i === round.results.length ? "now" : ""); el.append(d); }
+}
+$("askWord").onclick = () => say(round.current.w);
+$("askDef").onclick = () => say(round.current.def);
+$("askSent").onclick = () => say(round.current.sent);
+$("askPos").onclick = () => say(round.current.pos);
+
+/* ---- mic button states ---- */
+let micState = "idle";
+function setMic(state, msg){
+  micState = state; const b = $("micBtn");
+  b.classList.toggle("recording", state === "listening");
+  $("micLbl").textContent = state === "idle" ? "Tap and spell" : state === "listening" ? "Listening…" : "Checking…";
+  b.disabled = state === "checking";
+  $("doneBtn").hidden = state !== "listening";
+  $("restartBtn").hidden = !(state === "listening" && round && round.mode !== "bee");
+  $("status").textContent = msg || (state === "listening" ? (round.mode === "bee" ? "Say the word, spell it, say the word again." : "Spell it. I'll check when you stop.") : "");
+}
+function cancelListening(msg){ setMic("idle", msg); }
+$("micBtn").onclick = async () => {
+  if (micState === "listening"){ finishListening(); return; }
+  if (micState !== "idle") return;
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  try{ await recStart(round.mode === "bee" ? beeTick : practiceTick); }
+  catch(e){ setMic("idle", "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
+  R.checking = false; R.prompted = false;
+  setMic("listening");
+};
+$("doneBtn").onclick = () => finishListening();
+$("restartBtn").onclick = async () => { recStop(); try{ await recStart(practiceTick); setMic("listening", "Starting over. Spell it from the beginning."); }catch(e){ setMic("idle"); } };
+function finishListening(){ if (round.mode === "bee") finishBee(); else finishPractice(); }
+function practiceTick(now){
+  if (now - R.startedAt > 30000) return finishPractice();
+  if (R.heard && R.lastSpeech && now - R.lastSpeech > 2000) finishPractice();
+}
+
+/* ---- practice / review: one clip, letter recognition ---- */
+async function finishPractice(){
+  if (micState !== "listening") return;
+  const dur = recDuration(); recStop(); setMic("checking");
+  if (dur < 0.4){ setMic("idle", "I didn't hear anything. Tap and try again."); return; }
   try{
-    // 1) plain pass over everything: where the word, the start-overs and the lock-in were said
-    const pl = await postClip(pcmClip(0, dur), "plain", w, "pcm");
+    const d = await transcribe(recClip(0, dur), "letters");
+    const a = scoreBee([textOf(d)], round.current.w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, []);
+    if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again, a little closer and slower."); return; }
+    showResult(a.verdict === "correct", a.final, "practice");
+  }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again, or type it."); }
+}
+
+/* ---- bee simulation: word, letters, word; start-over follows the Scripps rule ---- */
+function beeTick(now){
+  if (now - R.startedAt > 55000) return finishBee();
+  if (R.heard && R.lastSpeech && now - R.lastSpeech > 1400 && !R.checking && !R.checkedSinceSpeech) beeCheck();
+  if (R.lastSpeech > R.lastCheckAt) R.checkedSinceSpeech = false;
+  if (!R.prompted && R.lastSpeech && now - R.lastSpeech > 5000 && !R.checking){ R.prompted = true; $("status").textContent = "Say the word again to lock in your spelling, or say “start over”."; }
+}
+async function beeCheck(){
+  R.checking = true; R.checkedSinceSpeech = true; R.lastCheckAt = performance.now();
+  try{
+    const dur = recDuration();
+    const d = await transcribe(recClip(Math.max(0, dur - 12), dur), "plain", round.current.w);
+    if (micState === "listening" && isLockedIn(wordsOf(d.results), round.current.w)){ R.checking = false; finishBee(); return; }
+  }catch(e){ $("status").textContent = "Speech service trouble: " + String(e.message||e).slice(0,80); }
+  R.checking = false;
+}
+async function finishBee(){
+  if (micState !== "listening") return;
+  const dur = recDuration(); recStop(); setMic("checking", "Locked in. Checking…");
+  const w = round.current.w;
+  try{
+    const pl = await transcribe(recClip(0, dur), "plain", w);
     const st = beeStructure(pl.results, w, dur);
     let a;
     if (st.timed){
-      // 2) letter pass on each spelling window only, so the spoken word and "start over" can't leak into the letters
-      const texts = await Promise.all(st.windows.map(([x,y]) => {
-        const a0 = Math.max(0, x-0.05), a1 = Math.min(dur, y+0.05);
-        if (a1 - a0 < 0.25) return Promise.resolve("");
-        return postClip(pcmClip(a0, a1), "letters", "", "pcm")
-          .then(d => wordsOf(d.results).map(t=>t.w).join(" ")); }));
+      const texts = await Promise.all(st.windows.map(([x,y]) => { const a0 = Math.max(0, x-0.05), a1 = Math.min(dur, y+0.05);
+        return a1 - a0 < 0.25 ? "" : transcribe(recClip(a0, a1), "letters").then(textOf); }));
       a = analyzeBeeWindows(st, texts, w, true);
     } else {
-      const le = await postClip(pcmClip(0, dur), "letters", "", "pcm");
-      a = analyzeBee(pl.results, le.results, w, true);
+      a = analyzeBee(pl.results, (await transcribe(recClip(0, dur), "letters")).results, w, true);
     }
-    let msg;
-    if (!a.final) msg = "Didn't catch any letters. Tap Mic mess-up / redo and try again.";
-    else if (a.violation) msg = `Incorrect. After “start over”, the letters can't change (Scripps rule). First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
-    else if (a.verdict==="correct") msg = a.locked ? "Correct, and locked in." : "Correct, but not locked in. Say the word again at the end to lock in your answer.";
-    else msg = `Incorrect. The word is “${w}”.` + (a.locked ? "" : " (Not locked in: say the word at the end.)");
-    if (a.notes.length) msg += " " + a.notes.join(" ");
-    const timeline = (a.opening ? "Said the word ✓" : "No word first") + " · " +
-      a.attempts.map((x,i) => `Try ${i+1}: ${x || "—"}`).join(" · start over · ") + " · " + (a.locked ? "Locked in ✓" : "Not locked in") + (a.timed ? "" : " · (no timing from Google)");
-    current = { word:w, heard:a.final, merged:false, raw: timeline + "   |   Google (plain): “" + a.plainText + "”", alts:[], verdict: a.final ? a.verdict : "unclear",
-                strict: a.verdict==="correct", lenient: a.verdict==="correct", mode:"bee", beeMsg:msg, bee:a, mergedWords:[], ambiguous:[], error:"" };
-    voskStatus(`Answer in ${((performance.now()-t0)/1000).toFixed(1)} s`, "ok");
-  }catch(e){
-    lastError = String(e.message||e);
-    current = { word:w, heard:"", merged:false, raw:"", alts:[], verdict:"unclear", strict:false, lenient:false, mode:"bee",
-                beeMsg:"Cloud error: "+lastError.slice(0,160), mergedWords:[], ambiguous:[], error:lastError };
-    voskStatus("Cloud error: "+lastError.slice(0,140), "no");
-  }
-  busy = false; B.stopping = false; render();
+    if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again."); return; }
+    let note = "";
+    if (a.violation) note = `After “start over”, the letters can't change. First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
+    else if (!a.locked) note = "Remember to say the word again at the end to lock in your answer.";
+    if (!a.opening) note += (note ? " " : "") + "Remember to say the word before you spell it.";
+    showResult(a.verdict === "correct", a.final, "bee", note);
+  }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again."); }
 }
 
-function start(){
-  const mode=$("mode").value;
-  if(!["vosk","cloud","bee"].includes(mode) && !SR){ return; }
-  segments=[]; baseSegments=[]; interim=""; lastError=""; current=null; V.confs=[];
-  listening=true; $("truth").hidden=true; $("verdict").hidden=true;
-  if (mode==="vosk"){ startVosk(); render(); return; }
-  if (mode==="cloud"){ startCloud(); render(); return; }
-  if (mode==="bee"){ startBee(); render(); return; }
-  if (mode==="local"){
-    render();
-    ensureLocal().then(ok => {
-      if (!ok){ listening=false; render(); return; }
-      rec = makeRec(false, true); try{ rec.start(); }catch(e){ lastError=String(e); } render();
-    });
-    return;
-  }
-  rec = makeRec(mode==="continuous", false);
-  try{ rec.start(); }catch(e){ lastError=String(e); }
-  render();
-}
-function stop(){
-  listening=false;
-  if ($("mode").value==="vosk"){ render(); stopVosk(); return; }
-  if ($("mode").value==="cloud"){ render(); stopCloud(); return; }
-  if ($("mode").value==="bee"){ listening=true; finishBee("done"); return; }
-  finished = false;
-  try{ rec && rec.stop(); }catch(e){}
-  // finish when the recognizer reports it has ended (last results delivered), or after 1.5 s at most
-  setTimeout(finishOnce, 1500);
-}
-let finished = true; let micLive = false;
-function finishOnce(){ if (finished) return; finished = true; if (interim.trim()){ segments.push([interim.trim()]); interim=""; } finish(); }
-function heardText(){ return segments.map(s=>s[0]).join(" ") + (interim?(" "+interim):""); }
-function finish(){
-  const w = word(); const top = segments.map(s=>s[0]).join(" ");
-  const p = parseLetters(top, w, {joined: $("mode").value==="cloud"});
-  const shownLetters = (!isCorrect(p.letters, w) && p.cloud) ? (p.alts.find(a=>isCorrect(a,w)) || p.letters) : p.letters;
-  current = { word:w, heard:shownLetters, merged:p.merged, raw:top, alts:segments.map(s=>s.slice(0,5)),
-              verdict:verdictFor(p,w, $("mode").value==="cloud" ? 1 : segments.length), // Mode E records one continuous clip: no restarts ambiguous:p.ambiguous, mergedWords:p.mergedWords, strict:isCorrect(p.letters,w), lenient:anyAltCorrect(segments.length?segments:[[""]], w),
-              mode:$("mode").value, error:lastError, confs:(V.confs||[]).slice() };
-  render();
-}
+/* ---- typing ---- */
+$("typeToggle").onclick = () => { $("typeBox").hidden = !$("typeBox").hidden; if (!$("typeBox").hidden) $("typeIn").focus(); };
+$("typeBox").onsubmit = e => { e.preventDefault(); const t = clean($("typeIn").value); if (!t) return;
+  showResult(isCorrect(t, round.current.w), t, "type"); };
 
-/* ---------- Render ---------- */
-function render(){
-  const w = word();
-  $("progress").textContent = `Word ${idx+1} of ${words().length}`;
-  $("word").textContent = w; $("word").classList.toggle("hidden", !$("showword").checked);
-  // Mode A restarts the mic after each pause; show the kid when it's safe to keep going
-  const micOn = micLive || ["vosk","cloud","bee"].includes($("mode").value);
-  $("start").classList.toggle("listening", listening);
-  $("start").classList.toggle("paused", listening && !micOn);
-  $("startlbl").textContent = busy ? "Checking…" : !listening ? "Start spelling" : $("mode").value==="cloud" ? "Recording, tap Done" : $("mode").value==="bee" ? "Listening…" : micOn ? "Listening, keep going" : "Wait for red…";
-  $("start").disabled = listening || busy || (!["vosk","cloud","bee"].includes($("mode").value) && !SR);
-  $("voskbox").hidden = !["vosk","local","cloud","bee"].includes($("mode").value);
-  $("cloudbox").hidden = !["cloud","bee"].includes($("mode").value); $("done").disabled = !listening;
-  const live = parseLetters(heardText(), w).letters;
-  const tiles = $("tiles"); tiles.innerHTML="";
-  const ops = current ? align(current.heard, w) : live.split("").map(ch=>({ch,t:""}));
-  for (const o of ops){ const t=document.createElement("span"); t.className="tile "+o.t; t.textContent=o.ch; if(o.t==="x"||o.t==="gap") t.title="Should be: "+(o.want||"(nothing)"); tiles.append(t); }
-  const others = current && current.mode==="cloud" ? [...new Set((current.alts||[]).flatMap(a=>a.slice(1)))].filter(Boolean) : [];
-  $("raw").textContent = (current && current.mode==="bee") ? current.raw : (current?current.raw:heardText()).trim()
-    ? "Recognizer heard: “"+(current?current.raw:heardText()).trim()+"”" + (others.length ? "  (other guesses: “"+others.join("”, “")+"”)" : "")
-    : (lastError?"Error: "+lastError:"");
-  if (current){
-    const v=$("verdict"); v.hidden=false;
-    const vd=current.verdict;
-    if (current.mode==="bee" && current.beeMsg){ v.className="verdict "+(vd==="correct"?"ok":vd==="wrong"?"no":"wait"); v.textContent=current.beeMsg; $("truth").hidden=false; renderLog(); return; }
-    v.className="verdict "+(vd==="correct"?"ok":(vd==="unsure"||vd==="unclear")?"wait":"no");
-    v.textContent = vd==="correct" ? "App says: correct" + (current.merged && current.mode!=="cloud"?" (recognizer joined letters into a word, so double-check)":"")
-      : vd==="unsure" ? `App isn't sure. Google wrote “${(current.ambiguous||[]).join("”, “")}”, which could be read more than one way. The full app would ask your kid to repeat that letter.`
-      : vd==="unclear" ? (!current.heard ? "Didn't catch any letters. Tap Mic mess-up / redo and try again."
-        : (current.mergedWords||[]).length
-          ? `Couldn't hear the letters clearly. Google heard “${current.mergedWords.join("”, “")}”, a word instead of letters. The full app would ask your kid to spell it again.`
-          : `Some letters were missed while the mic restarted between pauses. The full app would ask your kid to spell it again.`)
-      : `App says: incorrect. The word is “${w}”.` + (current.merged && current.mode!=="cloud"?" (recognizer joined letters into a word)":"");
-    $("truth").hidden=false;
-  }
-  renderLog();
+/* ---- result ---- */
+function showResult(ok, heard, mode, note){
+  const w = round.current.w;
+  const at = { id: uid(), t: Date.now(), u: Date.now(), w, ok, h: heard, m: mode };
+  doc.attempts.push(at); saveLocal(); queueSync();
+  round.attemptId = at.id; round.results.push({ w, ok, h: heard });
+  if (!ok && round.mode !== "bee") round.reask.push({ w, at: round.asked.length });
+  $("spellArea").hidden = true; $("resultArea").hidden = false; $("asks").hidden = false;
+  const v = $("verdict"); v.className = "verdict " + (ok ? "ok celebrate" : "no");
+  v.textContent = ok ? ["Correct!","You got it!","Nice spelling!","Perfect!"][Math.floor(Math.random()*4)] : "Not quite.";
+  const tiles = $("tiles"); tiles.innerHTML = "";
+  for (const o of align(heard, w)){ const t = document.createElement("span"); t.className = "tile " + o.t; t.textContent = o.ch;
+    if (o.t === "x" || o.t === "gap") t.title = "Should be: " + (o.want || "(nothing)"); tiles.append(t); }
+  const forms = targetForms(w);
+  // underline the letters of the right spelling that were missed or wrong (lined up the same way as the tiles)
+  const marks = ok ? forms[0].split("").map(ch => esc(ch)) : align(heard, w).filter(o => o.want).map(o => o.t === "m" ? esc(o.want) : `<span class="w">${esc(o.want)}</span>`);
+  $("answer").innerHTML = marks.join("")
+    + (forms.length > 1 ? ` <span class="small muted">or ${esc(forms[1])}</span>` : "");
+  $("detail").textContent = (note ? note + " " : "") + (ok ? "" : mistakeNote(heard, w));
+  $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
+  renderDots();
+  if (ok) say(v.textContent);
+  else say(`The word ${w} is spelled ${spellOut(w)}.`);
 }
-function renderLog(){
-  const tb=$("log").querySelector("tbody"); tb.innerHTML="";
-  results.forEach((r,i)=>{
-    const tr=document.createElement("tr");
-    [i+1, r.word, r.heard||"—", (r.verdict==="unsure"||r.verdict==="unclear")?"?":r.strict?"✓":"✗", r.truth==="right"?"Right":"Wrong"].forEach(v=>{const td=document.createElement("td"); td.textContent=v; tr.append(td);});
-    tb.append(tr);
-  });
-  const n=results.length;
-  const agree=results.filter(r=>r.strict===(r.truth==="right")).length;
-  const falseAccept=results.filter(r=>r.strict && r.truth==="wrong").length;
-  const falseReject=results.filter(r=>!r.strict && r.truth==="right").length;
-  const lenAgree=results.filter(r=>r.lenient===(r.truth==="right")).length;
-  const S=$("stats"); S.innerHTML="";
-  [["Words tested",n],["App agreed with you",n?Math.round(100*agree/n)+"%":"—"],["Wrong spelling marked right",falseAccept],["Right spelling marked wrong",falseReject],["Agreement, lenient scoring",n?Math.round(100*lenAgree/n)+"%":"—"],["Unsure or unclear, would ask to repeat",results.filter(r=>r.verdict==="unsure"||r.verdict==="unclear").length]]
-    .forEach(([k,v])=>{const d=document.createElement("div"); d.className="stat"; const b=document.createElement("b"); b.textContent=v; d.append(b, document.createTextNode(k)); S.append(d);});
+function mistakeNote(h, w){
+  const k = mistakeKinds(h, w); if (!k.length) return "";
+  return "Tip: " + k.map(x => MISTAKE_TIPS[x]).join(" ");
 }
-
-/* ---------- Events ---------- */
-$("hear").onclick = () => say(`${word()}. ${word()}.`);
-$("start").onclick = start; $("done").onclick = stop;
-function record(truth){ if(!current) return; results.push({...current, truth, set:$("set").value, ts:new Date().toISOString()}); save(); next(); }
-$("tRight").onclick = () => record("right"); $("tWrong").onclick = () => record("wrong");
-$("tMic").onclick = () => { current=null; segments=[]; render(); };
-function next(){ current=null; segments=[]; interim=""; idx=Math.min(idx+1, words().length-1); $("truth").hidden=true; $("verdict").hidden=true; render(); }
-$("skip").onclick = next;
-$("prev").onclick = () => { current=null; segments=[]; idx=Math.max(0,idx-1); $("truth").hidden=true; $("verdict").hidden=true; render(); };
-$("set").onchange = () => { idx=0; current=null; segments=[]; render(); };
-$("showword").onchange = render;
-$("mode").onchange = () => { if($("mode").value==="vosk") loadVosk().catch(()=>{}); if(["cloud","bee"].includes($("mode").value)) cloudReady(); render(); };
-if (/Silk\//.test(navigator.userAgent) || !SR){ $("mode").value="vosk"; loadVosk().catch(()=>{}); }
-$("copy").onclick = async () => {
-  const txt = JSON.stringify({page:APP_VERSION, worker:workerVersion, ua:navigator.userAgent, results}, null, 1);
-  try{ await navigator.clipboard.writeText(txt); $("copymsg").textContent="Copied. Paste it into the chat."; }
-  catch(e){ const d=$("dump"); d.hidden=false; d.value=txt; d.select(); $("copymsg").textContent="Select all the text below and copy it."; }
+$("nextBtn").onclick = () => { if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
+$("redoBtn").onclick = () => {            // the app misheard: void this attempt and try again
+  const a = doc.attempts.find(x => x.id === round.attemptId); if (a){ a.x = 1; a.u = Date.now(); saveLocal(); queueSync(); }
+  round.results.pop(); if (round.reask.length && round.reask[round.reask.length-1].w === round.current.w) round.reask.pop();
+  $("resultArea").hidden = true; $("spellArea").hidden = false; setMic("idle", "Okay, let's try that again."); renderDots();
 };
-let clearArmed=false;
-$("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textContent="Tap again to clear"; setTimeout(()=>{clearArmed=false;$("clear").textContent="Clear results";},3000); return; }
-  results=[]; save(); clearArmed=false; $("clear").textContent="Clear results"; render(); };
+function override(ok){
+  const a = doc.attempts.find(x => x.id === round.attemptId); if (!a || a.ok === ok) return;
+  a.ok = ok; a.o = 1; a.u = Date.now(); saveLocal(); queueSync();
+  const r = round.results[round.results.length-1]; if (r) r.ok = ok;
+  if (ok){ const i = round.reask.findIndex(x => x.w === round.current.w); if (i >= 0) round.reask.splice(i,1); }
+  else if (round.mode !== "bee") round.reask.push({ w: round.current.w, at: round.asked.length });
+  const v = $("verdict"); v.className = "verdict " + (ok ? "ok" : "no"); v.textContent = ok ? "Marked right by a grown-up." : "Marked wrong by a grown-up.";
+  $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
+  renderDots();
+}
+$("markRight").onclick = () => override(true);
+$("markWrong").onclick = () => override(false);
+$("quitRound").onclick = () => { if (R.active) recStop(); finishRound(); };
+function finishRound(){
+  if (R.active) recStop();
+  $("spellArea").hidden = true; $("resultArea").hidden = true; $("asks").hidden = true; $("summaryArea").hidden = false;
+  const ok = round.results.filter(r => r.ok).length, n = round.results.length;
+  $("summaryHead").textContent = round.mode === "bee"
+    ? `You spelled ${ok} word${ok===1?"":"s"} in a row.` + (ok >= (doc.profile.bestBee||0) && ok > 0 ? " That's your best yet!" : "")
+    : n ? `${ok} of ${n} right this round.` : "No words this round.";
+  if (round.mode === "bee" && ok > (doc.profile.bestBee||0)){ doc.profile.bestBee = ok; doc.profile.updatedAt = Date.now(); saveLocal(); queueSync(); }
+  $("summaryRows").innerHTML = round.results.map(r => `<tr><td>${esc(r.w)}</td><td>${r.ok ? "✓" : "✗"}</td><td>${esc(r.h)}</td></tr>`).join("");
+}
+$("againBtn").onclick = () => startRound(round.mode);
+$("homeBtn").onclick = () => { show("home"); renderHome(); };
 
-// Release the mic when this tab is hidden or closed. Otherwise a background tab keeps restarting
-// its listening session and can starve the tab you're actually using.
-function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } if (B.active) cancelBee(); render(); }
-document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
-window.addEventListener("pagehide", releaseMic);
-// Safety: stop auto-restarting after 90 s so a forgotten session can't run forever
-let listenTimer=null;
-const _start = start; start = function(){ _start(); clearTimeout(listenTimer); listenTimer=setTimeout(()=>{ if(listening) stop(); }, 90000); };
-$("start").onclick = start;
+/* ================= mistakes ================= */
+const VOWELS = new Set("aeiouy");
+const MISTAKE_TIPS = {
+  double: "Watch for double letters.", missing: "A letter was left out.", extra: "There was an extra letter.",
+  vowel: "Check the vowel sounds.", consonant: "Check the consonants.", swap: "Two letters were swapped."
+};
+const MISTAKE_NAMES = { double:"Double letters", missing:"Left out a letter", extra:"Extra letter", vowel:"Vowel mix-up", consonant:"Consonant mix-up", swap:"Swapped letters" };
+function mistakeKinds(h, w){
+  const t = targetForms(w)[0]; if (!h || isCorrect(h, w)) return [];
+  const kinds = new Set();
+  for (let i = 0; i+1 < t.length; i++){                         // adjacent swap
+    const s = t.slice(0,i) + t[i+1] + t[i] + t.slice(i+2); if (s === h){ kinds.add("swap"); return [...kinds]; } }
+  let j = 0;
+  for (const o of align(h, w)){
+    if (o.t === "gap"){ const k = t.indexOf(o.want, j); kinds.add((t[k-1] === o.want || t[k+1] === o.want) ? "double" : "missing"); }
+    else if (o.t === "x" && !o.want) kinds.add("extra");
+    else if (o.t === "x") kinds.add(VOWELS.has(o.want) && VOWELS.has(o.ch) ? "vowel" : "consonant");
+    if (o.want) j++;
+  }
+  return [...kinds];
+}
 
-document.getElementById("ver").textContent = `Page v${APP_VERSION} · ${APP_BUILT}`;
-document.getElementById("ver2").textContent = `v${APP_VERSION}`;
-diag(); render();
+/* ================= home ================= */
+function renderHome(){
+  const p = pool(), st = stats(doc), now = Date.now();
+  $("hello").textContent = `Hi, ${doc.profile.name}!`;
+  $("kidChip").hidden = false; $("kidChip").textContent = doc.profile.name + " · switch";
+  const seen = p.filter(x => st.has(x.w)).length, mastered = p.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
+  const due = p.filter(x => st.has(x.w) && isDue(st.get(x.w), now)).length;
+  const misses = reviewList().length;
+  const today = doc.attempts.filter(a => !a.x && a.t >= new Date().setHours(0,0,0,0)).length;
+  $("homeStats").innerHTML = [
+    [mastered + " / " + p.length, "words mastered"], [seen, "words practiced"], [today, "spelled today"], [doc.profile.bestBee || 0, "best bee streak"]
+  ].map(([b, s]) => `<div class="stat"><b>${b}</b>${s}</div>`).join("");
+  $("practiceSub").textContent = due ? `${due} word${due===1?"":"s"} ready to review, plus new ones` : "New words from your pages";
+  $("reviewSub").textContent = misses ? `${misses} word${misses===1?"":"s"} to fix` : "Nothing missed yet";
+}
+$("goPractice").onclick = () => startRound("practice");
+$("goReview").onclick = () => startRound("review");
+$("goBee").onclick = () => startRound("bee");
+$("goStats").onclick = () => openStats();
+$("goSettings").onclick = () => openSettings();
+$("switchKid").onclick = () => openKids();
+$("kidChip").onclick = () => { if (!R.active) openKids(); };
+
+/* ================= kids ================= */
+function pageChips(el, chosen){
+  el.innerHTML = PAGES.map(p => `<label class="chip"><input type="checkbox" value="${p}" ${chosen.includes(p)?"checked":""}> Page ${p} <span class="small muted">(gr. ${p}${p===8?"–9":"–"+(p+1)})</span></label>`).join("");
+}
+const chipVals = el => [...el.querySelectorAll("input:checked")].map(x => +x.value);
+async function openKids(){
+  show("kids"); pageChips($("newKidPages"), [2]);
+  const list = $("kidList"); list.innerHTML = '<p class="muted">Loading…</p>';
+  let kids = [];
+  try{ kids = (await api("/kids")).kids || []; }catch(e){ list.innerHTML = `<p class="muted">Couldn't load the list (${esc(e.message)}). Spellers saved on this device:</p>`; }
+  for (const k of Object.keys(localStorage)) if (k.startsWith("sb.doc.")){ const d = store.get(k, null);
+    if (d && d.profile && !kids.find(x => x.id === d.profile.id)) kids.push({ id: d.profile.id, name: d.profile.name }); }
+  if (!kids.length){ list.innerHTML = '<p class="muted">No spellers yet. Add one below.</p>'; $("addKidBox").open = true; return; }
+  list.innerHTML = ""; $("addKidBox").open = false;
+  for (const k of kids){ const b = document.createElement("button"); b.innerHTML = `🐝 <b>${esc(k.name)}</b>`;
+    b.onclick = async () => { b.disabled = true; await pullKid(k.id); if (!doc || !doc.profile){ b.disabled = false; return; } kidId = k.id; store.set("sb.kid", kidId); show("home"); renderHome(); setSync("Saved ✓","ok"); };
+    list.append(b); }
+}
+$("addKid").onclick = async () => {
+  const name = $("newKidName").value.trim(); const pages = chipVals($("newKidPages"));
+  if (!name){ $("newKidName").focus(); return; }
+  doc = newDoc(name, pages.length ? pages : [2]); kidId = doc.profile.id; store.set("sb.kid", kidId); saveLocal();
+  $("newKidName").value = ""; show("home"); renderHome(); syncNow();
+};
+
+/* ================= settings ================= */
+function openSettings(){
+  $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
+  $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
+  $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
+  show("settings");
+}
+$("setSave").onclick = () => {
+  const pages = chipVals($("setPages"));
+  Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
+    len: +$("setLen").value, rate: +$("setRate").value, updatedAt: Date.now() });
+  saveLocal(); queueSync(); show("home"); renderHome();
+};
+$("setDevSave").onclick = async () => {
+  cfg = { url: $("setUrl").value.trim().replace(/\/+$/,""), pass: $("setPass").value, model: $("setModel").value }; store.set("sb.cfg", cfg);
+  $("setMsg").textContent = "Checking…"; try{ await api("/kids"); $("setMsg").textContent = "Connected ✓"; }catch(e){ $("setMsg").textContent = "Not connected: " + e.message; }
+};
+$("setBack").onclick = () => { show("home"); renderHome(); };
+
+/* ================= setup ================= */
+$("cfgSave").onclick = async () => {
+  cfg = { url: $("cfgUrl").value.trim().replace(/\/+$/,""), pass: $("cfgPass").value, model: "default" };
+  $("cfgMsg").textContent = "Connecting…";
+  try{ await api("/kids"); store.set("sb.cfg", cfg); $("cfgMsg").textContent = ""; openKids(); }
+  catch(e){ $("cfgMsg").textContent = "Couldn't connect: " + e.message; }
+};
+
+/* ================= progress (stats) ================= */
+let statsDoc = null;
+async function openStats(){
+  show("stats");
+  const sel = $("statsKid"); sel.innerHTML = `<option value="${esc(doc.profile.id)}">${esc(doc.profile.name)}</option>`;
+  try{ const kids = (await api("/kids")).kids || []; for (const k of kids) if (k.id !== doc.profile.id) sel.insertAdjacentHTML("beforeend", `<option value="${esc(k.id)}">${esc(k.name)}</option>`); }catch(e){}
+  sel.value = doc.profile.id; statsDoc = doc; renderStats();
+}
+$("statsKid").onchange = async () => {
+  const id = $("statsKid").value;
+  if (id === doc.profile.id) statsDoc = doc;
+  else { $("statsBody").innerHTML = '<p class="muted">Loading…</p>'; try{ statsDoc = await api("/sync?kid=" + encodeURIComponent(id)); }catch(e){ $("statsBody").innerHTML = `<p class="muted">Couldn't load: ${esc(e.message)}</p>`; return; } }
+  renderStats();
+};
+$("statsBack").onclick = () => { show("home"); renderHome(); };
+function renderStats(){
+  const d = statsDoc, st = stats(d), att = (d.attempts||[]).filter(a => !a.x), now = Date.now();
+  const pages = (d.profile && d.profile.pages) || [2];
+  const week = att.filter(a => a.t >= now - 7*DAY), wk = week.length ? Math.round(100 * week.filter(a => a.ok).length / week.length) : null;
+  const days = new Set(att.map(a => new Date(a.t).toDateString()));
+  let streak = 0; for (let t = new Date(); days.has(t.toDateString()); t = new Date(t - DAY)) streak++;
+  const poolW = []; const seenW = new Set(); for (const p of pages) for (const x of pageWords(p)) if (!seenW.has(x.w)){ seenW.add(x.w); poolW.push(x); }
+  const mastered = poolW.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
+  let html = `<div class="stats">
+    <div class="stat"><b>${mastered} / ${poolW.length}</b>words mastered</div>
+    <div class="stat"><b>${wk === null ? "—" : wk + "%"}</b>right in the last 7 days</div>
+    <div class="stat"><b>${st.size}</b>words practiced</div>
+    <div class="stat"><b>${streak}</b>day streak</div>
+    <div class="stat"><b>${(d.profile && d.profile.bestBee) || 0}</b>best bee streak</div></div>`;
+  // mastery by page
+  html += `<div><h3>Mastery by page</h3><p class="small muted">A word is mastered after 3 right in a row.</p><div class="bars" style="margin-top:8px">` +
+    PAGES.map(p => { const ws = pageWords(p), m = ws.filter(x => (st.get(x.w)||{}).box >= MASTERED).length, s = ws.filter(x => st.has(x.w)).length;
+      if (!pages.includes(p) && !s) return "";
+      return `<div class="bar"><span>Page ${p}${pages.includes(p) ? "" : " (off)"}</span><div class="track"><div class="fill good" style="width:${100*m/ws.length}%"></div></div><span>${m}/${ws.length}</span></div>`; }).join("") + `</div></div>`;
+  // activity, last 14 days
+  const counts = []; for (let i = 13; i >= 0; i--){ const day = new Date(now - i*DAY).toDateString(); counts.push(att.filter(a => new Date(a.t).toDateString() === day).length); }
+  const mx = Math.max(1, ...counts);
+  html += `<div><h3>Words spelled per day (last 14 days)</h3><div class="spark" style="margin-top:8px">${counts.map(c => `<i style="height:${100*c/mx}%" title="${c}"></i>`).join("")}</div><p class="small muted">Most in a day: ${Math.max(...counts)}</p></div>`;
+  // trouble words
+  const trouble = [...st.entries()].filter(([,s]) => s.miss).sort((a,b) => (b[1].miss - b[1].ok*0.5) - (a[1].miss - a[1].ok*0.5)).slice(0, 15);
+  html += `<div><h3>Trouble words</h3>` + (trouble.length ? `<div class="tablewrap"><table><thead><tr><th>Word</th><th>Right</th><th>Missed</th><th>Last wrong spelling</th><th>Now</th></tr></thead><tbody>` +
+    trouble.map(([w,s]) => `<tr><td><b>${esc(w)}</b></td><td>${s.ok}</td><td>${s.miss}</td><td>${esc(s.wrong[s.wrong.length-1]||"")}</td><td>${s.box >= MASTERED ? "mastered" : s.streak ? s.streak + " right in a row" : "keep practicing"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="muted">No misses yet.</p>`) + `</div>`;
+  // mistake types
+  const kinds = {}; for (const a of att) if (!a.ok) for (const k of mistakeKinds(a.h, a.w)) kinds[k] = (kinds[k]||0) + 1;
+  const km = Math.max(1, ...Object.values(kinds));
+  html += `<div><h3>Kinds of mistakes</h3>` + (Object.keys(kinds).length ? `<div class="bars" style="margin-top:8px">` +
+    Object.entries(kinds).sort((a,b) => b[1]-a[1]).map(([k,c]) => `<div class="bar"><span>${MISTAKE_NAMES[k]}</span><div class="track"><div class="fill" style="width:${100*c/km}%"></div></div><span>${c}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
+  $("statsBody").innerHTML = html;
+}
+
+/* ================= start ================= */
+async function boot(){
+  $("ver").textContent = "v" + APP_VERSION; countdown();
+  if (!cfg || !cfg.url){ show("setup"); return; }
+  if (!kidId){ openKids(); return; }
+  await pullKid(kidId);
+  if (!doc || !doc.profile){ openKids(); return; }
+  show("home"); renderHome(); setSync("Saved ✓", "ok");
+}
+boot();
 </script>
 </body>
 </html>
