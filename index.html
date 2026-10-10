@@ -346,21 +346,25 @@ function findRestarts(words){
 function splitGlued(words, target){
   const forms = targetForms(target).filter(f=>f.length>=3), out=[];
   for (const x of words){
-    let t = clean(x.w), s = x.s, e = x.e, pieces = [];
-    let guard = 0;
-    while (t && guard++ < 4){
-      // the leftover must be about word-length (the spelled letters), so "younwavering" isn't split into "yo"+"unwavering"
+    let t = clean(x.w), s = x.s, e = x.e;
+    const timed = s!=null && e!=null;
+    const suf = [];
+    // spoken word glued AFTER the letters; the leftover must be about word-length (the spelled letters),
+    // so "younwavering" isn't split into "yo" + "unwavering"
+    for (let guard=0; guard<3; guard++){
       const f = forms.find(f => t.endsWith(f) && t.length - f.length >= Math.max(2, f.length - 2));
       if (!f) break;
-      const rest = t.slice(0, t.length - f.length);
-      let cut = null;
-      if (s!=null && e!=null){ const dur=e-s; cut = e - Math.min(0.9, 0.4*dur); }
-      pieces.unshift({w:f, s:cut, e:e}); t = rest; e = cut;
+      const cut = timed ? e - Math.min(0.9, 0.4*(e-s)) : null;
+      suf.unshift({w:f, s:cut, e}); t = t.slice(0, t.length - f.length); e = cut;
     }
-    if (pieces.length){ const f2 = forms.find(f => t.startsWith(f) && t.length - f.length >= Math.max(2, f.length - 2));
-      if (f2){ let cut = (s!=null && e!=null) ? s + Math.min(0.9, 0.4*(e-s)) : null; out.push({w:f2, s, e:cut}); t = t.slice(f2.length); s = cut; }
-      if (t) out.push({w:t, s, e}); out.push(...pieces); }
-    else out.push(x);
+    // spoken word glued BEFORE the letters ("tiptoetip" = "tiptoe" + t-i-p)
+    let pre = null;
+    const f2 = forms.find(f => t.startsWith(f) && t.length > f.length);
+    if (f2){ const cut = timed ? s + Math.min(0.9, 0.4*(e-s)) : null; pre = {w:f2, s, e:cut}; t = t.slice(f2.length); s = cut; }
+    if (!pre && !suf.length){ out.push(x); continue; }
+    if (pre) out.push(pre);
+    if (t) out.push({w:t, s, e});
+    out.push(...suf);
   }
   return out;
 }
@@ -381,27 +385,27 @@ function isLockedIn(plainWords, target){
   return hits.length >= 3 && hits[0].i <= 1 && !(lastRestart && lastRestart.j > hits[hits.length-2].i);
 }
 /* full analysis once recording ends */
-function analyzeBee(plainResults, letterResults, target, strict){
-  const plain = splitGlued(wordsOf(plainResults), target), letters = splitGlued(wordsOf(letterResults), target);
+/* where things were said, from the plain pass: opening word, start-overs, closing (lock-in) word, and the spelling windows */
+function beeStructure(plainResults, target, duration){
+  const plain = splitGlued(wordsOf(plainResults), target);
   const hits = findWordHits(plain, target), restarts = findRestarts(plain);
-  const firstLetterIdx = 0;
   const opening = hits.length && hits[0].i <= 1 && !(hits.length===1 && hits[0].j>=plain.length && plain.length>2) ? hits[0] : null;
   const lastHit = hits.length ? hits[hits.length-1] : null;
   const fillers = new Set(["um","uh","er","okay","ok"]);
   const closing = lastHit && lastHit!==opening && plain.slice(lastHit.j).every(x=>fillers.has(clean(x.w))) ? lastHit : null;
-  const timed = letters.length && letters.every(x=>x.s!=null) && plain.every(x=>x.s!=null);
-  const notes = [];
-  let attempts;
+  const timed = plain.length>0 && plain.every(x=>x.s!=null && x.e!=null);
+  const windows = [];
   if (timed){
-    const bounds=[]; let t0 = opening ? opening.e : -1;
-    for (const r of restarts){ if (r.s > t0 && (!closing || r.s < closing.s)){ bounds.push([t0, r.s]); t0 = r.e; } }
-    bounds.push([t0, closing ? closing.s : 1e9]);
-    attempts = bounds.map(([a,b]) => letters.filter(x => { const mid=(x.s+x.e)/2; return mid>a && mid<b; }).map(x=>x.w).join(" "));
-  } else {
-    attempts = [letters.map(x=>x.w).join(" ")];
-    if (restarts.length) notes.push("No timing from Google, so start-over couldn't be placed; scored the whole recording.");
+    let t0 = opening ? opening.e : 0;
+    for (const r of restarts){ if (r.s > t0 && (!closing || r.s < closing.s)){ windows.push([t0, r.s]); t0 = r.e; } }
+    windows.push([t0, closing ? closing.s : (duration || 1e9)]);
   }
-  const parsed = attempts.map(a => parseLetters(a, target, {joined:true}));
+  return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
+}
+/* score the spelling attempts (one text per window; the last one is the answer) */
+function scoreBee(attemptTexts, target, strict, st, notes){
+  const parsed = attemptTexts.map(a => { const words = splitGlued(a.split(/\s+/).filter(Boolean).map(w=>({w, s:null, e:null})), target);
+    return parseLetters(words.map(x=>x.w).join(" "), target, {joined:true}); });
   const finalP = parsed[parsed.length-1] || {letters:"", alts:[], mergedWords:[], cloud:true};
   let verdict = verdictFor(finalP, target);
   let finalLetters = finalP.letters;
@@ -415,11 +419,27 @@ function analyzeBee(plainResults, letterResults, target, strict){
     }
     if (violation && verdict==="correct") verdict = "wrong";
   }
-  if (!opening && strict) notes.push("Remember to say the word before spelling it.");
-  return { attempts: parsed.map(p=>p.letters), final: finalLetters, verdict, opening: !!opening, locked: !!closing,
-           restarts: restarts.length, violation, notes, plainText: plain.map(x=>x.w).join(" "), timed };
+  if (!st.opening && strict) notes.push("Remember to say the word before spelling it.");
+  return { attempts: parsed.map(p=>p.letters), final: finalLetters, verdict, opening: !!st.opening, locked: !!st.closing,
+           restarts: st.restarts.length, violation, notes, plainText: st.plainText, timed: st.timed };
 }
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,isLockedIn,findWordHits,findRestarts,wordsOf};
+/* preferred: letters transcribed separately for each window of audio (letterTexts[i] for st.windows[i]) */
+function analyzeBeeWindows(st, letterTexts, target, strict){ return scoreBee(letterTexts, target, strict, st, []); }
+/* fallback: one letter pass over the whole recording, split by word timestamps if Google gave them */
+function analyzeBee(plainResults, letterResults, target, strict){
+  const st = beeStructure(plainResults, target);
+  const letters = splitGlued(wordsOf(letterResults), target);
+  const notes = [];
+  let attempts;
+  if (st.timed && letters.length && letters.every(x=>x.s!=null)){
+    attempts = st.windows.map(([a,b]) => letters.filter(x => { const mid=(x.s+x.e)/2; return mid>a && mid<b; }).map(x=>x.w).join(" "));
+  } else {
+    attempts = [letters.map(x=>x.w).join(" ")];
+    if (st.restarts.length) notes.push("No timing from Google, so start-over couldn't be placed; scored the whole recording.");
+  }
+  return scoreBee(attempts, target, strict, st, notes);
+}
+if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf};
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"></script>
@@ -651,29 +671,47 @@ async function sendCloud(){
   busy = false; finished = false; finishOnce();
 }
 
-/* ---------- Bee mode: say the word, spell it, say the word again (lock-in). "Start over" restarts the spelling. ---------- */
-const B = { rec:null, stream:null, chunks:[], ctx:null, an:null, timer:null, checking:false, lastSpeech:0, speechSinceCheck:false,
-            startedAt:0, floor:1, promptShown:false, stopping:false, cancelled:false };
-async function postClip(blob, pass, w){
+/* ---------- Bee mode: say the word, spell it, say the word again (lock-in). "Start over" restarts the spelling. ----------
+   Audio is captured as raw samples so the app can cut out just the spelling and send that part for letter recognition. */
+const B = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, checking:false, lastSpeech:0,
+            speechSinceCheck:false, startedAt:0, floor:1, promptShown:false, stopping:false, cancelled:false };
+async function postClip(blob, pass, w, enc){
   const c = getCloud();
-  const r = await fetch(`${c.url}/?pass=${pass}&m=${encodeURIComponent(c.model)}${w?`&w=${encodeURIComponent(w)}`:""}`,
-                        { method:"POST", headers:{ "X-Passcode":c.pass, "Content-Type":blob.type }, body:blob });
+  const q = `pass=${pass}&m=${encodeURIComponent(c.model)}${w?`&w=${encodeURIComponent(w)}`:""}${enc?`&enc=${enc}`:""}`;
+  const r = await fetch(`${c.url}/?${q}`, { method:"POST", headers:{ "X-Passcode":c.pass, "Content-Type":blob.type || "application/octet-stream" }, body:blob });
   const d = await r.json().catch(()=>({error:"Worker returned non-JSON (status "+r.status+")"}));
   if (!r.ok || d.error) throw new Error((d.error && (d.error.message||d.error)) || ("HTTP "+r.status));
   return d;
 }
-function beeBlob(){ return new Blob(B.chunks, {type:(B.rec && B.rec.mimeType) || "audio/webm"}); }
+function pcmDuration(){ let n=0; for (const a of B.pcm) n+=a.length; return n / B.rate; }
+/* samples between t0..t1 seconds, averaged down to 16 kHz, as 16-bit PCM (what Google calls LINEAR16) */
+function pcmClip(t0, t1){
+  let n=0; for (const a of B.pcm) n+=a.length;
+  const all = new Float32Array(n); let o=0; for (const a of B.pcm){ all.set(a, o); o+=a.length; }
+  const i0 = Math.max(0, Math.floor(t0*B.rate)), i1 = Math.min(n, Math.ceil(t1*B.rate));
+  const ratio = B.rate/16000, len = Math.max(0, Math.floor((i1-i0)/ratio));
+  const out = new Int16Array(len);
+  for (let k=0;k<len;k++){
+    const a = i0 + Math.floor(k*ratio), b = Math.min(i1, i0 + Math.floor((k+1)*ratio));
+    let s=0; for (let i=a;i<b;i++) s+=all[i]; const v = Math.max(-1, Math.min(1, s/Math.max(1,b-a)));
+    out[k] = v<0 ? v*0x8000 : v*0x7fff;
+  }
+  return new Blob([out.buffer], {type:"application/octet-stream"});
+}
 async function startBee(){
   if (!cloudReady()){ listening=false; render(); return; }
   try{ B.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); }
   catch(e){ lastError="microphone: "+(e.name||e); listening=false; render(); return; }
-  const type = ["audio/webm;codecs=opus","audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
-  Object.assign(B, { chunks:[], checking:false, lastSpeech:0, speechSinceCheck:false, startedAt:performance.now(), floor:1, promptShown:false, stopping:false, cancelled:false });
-  B.rec = new MediaRecorder(B.stream, type?{mimeType:type}:undefined);
-  B.rec.ondataavailable = e => { if (e.data && e.data.size) B.chunks.push(e.data); };
-  B.rec.start(250);
+  Object.assign(B, { active:true, pcm:[], checking:false, lastSpeech:0, speechSinceCheck:false, startedAt:performance.now(),
+                     floor:1, promptShown:false, stopping:false, cancelled:false });
   B.ctx = new (window.AudioContext||window.webkitAudioContext)();
-  const src = B.ctx.createMediaStreamSource(B.stream); B.an = B.ctx.createAnalyser(); B.an.fftSize = 1024; src.connect(B.an);
+  try{ await B.ctx.resume(); }catch(e){}
+  B.rate = B.ctx.sampleRate;
+  const src = B.ctx.createMediaStreamSource(B.stream);
+  B.an = B.ctx.createAnalyser(); B.an.fftSize = 1024; src.connect(B.an);
+  B.sp = B.ctx.createScriptProcessor(4096, 1, 1);
+  B.sp.onaudioprocess = e => { if (B.active && !B.stopping) B.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  src.connect(B.sp); B.sp.connect(B.ctx.destination);
   B.buf = new Float32Array(B.an.fftSize);
   voskStatus("Say the word, spell it, then say the word again", "ok");
   B.timer = setInterval(beeTick, 100);
@@ -694,10 +732,9 @@ function beeTick(){
 }
 async function checkLock(){
   B.checking = true; B.speechSinceCheck = false;
-  try{ B.rec.requestData(); }catch(e){}
-  await new Promise(r => setTimeout(r, 150));
   try{
-    const d = await postClip(beeBlob(), "plain", word());
+    const dur = pcmDuration();
+    const d = await postClip(pcmClip(Math.max(0, dur-12), dur), "plain", word(), "pcm");   // the last 12 s is enough to see the ending
     if (!listening || B.stopping) { B.checking=false; return; }
     if (isLockedIn(wordsOf(d.results), word())){ B.checking=false; finishBee("locked"); return; }
     if (!B.promptShown) voskStatus("Listening…", "ok");
@@ -706,24 +743,38 @@ async function checkLock(){
 }
 function releaseBeeMic(){
   clearInterval(B.timer); B.timer=null;
+  try{ B.sp && B.sp.disconnect(); }catch(e){}
   try{ B.stream && B.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
   try{ B.ctx && B.ctx.close(); }catch(e){}
-  B.an=null; $("level").style.width="0";
+  B.an=null; B.sp=null; $("level").style.width="0";
 }
-function cancelBee(){ B.cancelled=true; try{ B.rec && B.rec.state!=="inactive" && B.rec.stop(); }catch(e){} releaseBeeMic(); B.rec=null; }
+function cancelBee(){ B.cancelled=true; B.active=false; releaseBeeMic(); }
 async function finishBee(reason){
-  if (B.stopping || !B.rec) return;
+  if (B.stopping || !B.active) return;
   B.stopping = true; listening = false; busy = true; render();
-  await new Promise(res => { B.rec.onstop = res; try{ B.rec.state!=="inactive" ? B.rec.stop() : res(); }catch(e){ res(); } });
-  releaseBeeMic();
-  const blob = beeBlob(); B.rec = null;
+  const dur = pcmDuration();
+  releaseBeeMic(); B.active = false;
   if (B.cancelled){ busy=false; B.stopping=false; render(); return; }
   const w = word();
   voskStatus(reason==="locked" ? "Locked in. Scoring…" : "Scoring…", "wait");
   const t0 = performance.now();
   try{
-    const [pl, le] = await Promise.all([postClip(blob, "plain", w), postClip(blob, "letters", "")]);
-    const a = analyzeBee(pl.results, le.results, w, true);
+    // 1) plain pass over everything: where the word, the start-overs and the lock-in were said
+    const pl = await postClip(pcmClip(0, dur), "plain", w, "pcm");
+    const st = beeStructure(pl.results, w, dur);
+    let a;
+    if (st.timed){
+      // 2) letter pass on each spelling window only, so the spoken word and "start over" can't leak into the letters
+      const texts = await Promise.all(st.windows.map(([x,y]) => {
+        const a0 = Math.max(0, x-0.05), a1 = Math.min(dur, y+0.05);
+        if (a1 - a0 < 0.25) return Promise.resolve("");
+        return postClip(pcmClip(a0, a1), "letters", "", "pcm")
+          .then(d => wordsOf(d.results).map(t=>t.w).join(" ")); }));
+      a = analyzeBeeWindows(st, texts, w, true);
+    } else {
+      const le = await postClip(pcmClip(0, dur), "letters", "", "pcm");
+      a = analyzeBee(pl.results, le.results, w, true);
+    }
     let msg;
     if (!a.final) msg = "Didn't catch any letters. Tap Mic mess-up / redo and try again.";
     else if (a.violation) msg = `Incorrect. After “start over”, the letters can't change (Scripps rule). First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
@@ -865,7 +916,7 @@ $("clear").onclick = () => { if(!clearArmed){ clearArmed=true; $("clear").textCo
 
 // Release the mic when this tab is hidden or closed. Otherwise a background tab keeps restarting
 // its listening session and can starve the tab you're actually using.
-function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } if (B.rec) cancelBee(); render(); }
+function releaseMic(){ if (!listening) return; listening=false; try{ rec && rec.abort(); }catch(e){} if (V.rec) stopVosk(); if (C.rec) { C.cancel=true; stopCloud(); } if (B.active) cancelBee(); render(); }
 document.addEventListener("visibilitychange", () => { if (document.hidden) releaseMic(); });
 window.addEventListener("pagehide", releaseMic);
 // Safety: stop auto-restarting after 90 s so a forgotten session can't run forever
