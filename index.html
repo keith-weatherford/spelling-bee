@@ -306,7 +306,8 @@ function wordsOf(results){
   const out=[];
   for (const r of results||[]){
     const a=(r.alternatives||[])[0]; if(!a) continue;
-    if (a.words && a.words.length) for (const x of a.words) out.push({w:x.word, s:tsec(x.startTime), e:tsec(x.endTime)});
+    // Google's JSON leaves out a time of exactly 0 (e.g. the first word's startTime), so a missing time inside "words" means 0
+    if (a.words && a.words.length) for (const x of a.words) out.push({w:x.word, s:tsec(x.startTime ?? 0), e:tsec(x.endTime ?? 0)});
     else for (const t of (a.transcript||"").trim().split(/\s+/).filter(Boolean)) out.push({w:t, s:null, e:null});
   }
   return out;
@@ -782,7 +783,7 @@ async function finishBee(reason){
     else msg = `Incorrect. The word is “${w}”.` + (a.locked ? "" : " (Not locked in: say the word at the end.)");
     if (a.notes.length) msg += " " + a.notes.join(" ");
     const timeline = (a.opening ? "Said the word ✓" : "No word first") + " · " +
-      a.attempts.map((x,i) => `Try ${i+1}: ${x || "—"}`).join(" · start over · ") + " · " + (a.locked ? "Locked in ✓" : "Not locked in");
+      a.attempts.map((x,i) => `Try ${i+1}: ${x || "—"}`).join(" · start over · ") + " · " + (a.locked ? "Locked in ✓" : "Not locked in") + (a.timed ? "" : " · (no timing from Google)");
     current = { word:w, heard:a.final, merged:false, raw: timeline + "   |   Google (plain): “" + a.plainText + "”", alts:[], verdict: a.final ? a.verdict : "unclear",
                 strict: a.verdict==="correct", lenient: a.verdict==="correct", mode:"bee", beeMsg:msg, bee:a, mergedWords:[], ambiguous:[], error:"" };
     voskStatus(`Answer in ${((performance.now()-t0)/1000).toFixed(1)} s`, "ok");
