@@ -70,6 +70,16 @@ label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
 .tile.m{border-color:var(--good);background:var(--good-soft);color:var(--good)}
 .tile.x{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
 .tile.gap{border-style:dashed;border-color:var(--bad);color:var(--bad);background:transparent}
+.tile.q{border-color:var(--honey);background:var(--honey-soft);color:var(--honey)}
+.abc{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
+.abc div{border:2px solid var(--line);border-radius:12px;padding:8px 4px;text-align:center;background:var(--bg)}
+.abc b{display:block;font:700 2rem/1.1 var(--display)}
+.abc span{display:block;font-size:.8rem;color:var(--muted);min-height:1.2em;overflow-wrap:anywhere}
+.abc .ok{border-color:var(--good);background:var(--good-soft)} .abc .ok span{color:var(--good)}
+.abc .tok{border-color:var(--honey);background:var(--honey-soft)} .abc .tok span{color:var(--honey)}
+.abc .no{border-color:var(--bad);background:var(--bad-soft)} .abc .no span{color:var(--bad)}
+.checks{display:grid;gap:10px}
+.checkitem{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px}
 .answer{font:700 clamp(1.8rem,7vw,2.6rem)/1.1 var(--display);letter-spacing:.04em;overflow-wrap:anywhere}
 .answer .w{color:var(--bad);text-decoration:underline;text-decoration-thickness:3px}
 .verdict{font:700 1.25rem/1.3 var(--display);padding:12px 14px;border-radius:12px}
@@ -77,6 +87,7 @@ label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
 .progress{display:flex;gap:6px;flex-wrap:wrap}
 .progress i{width:14px;height:14px;border-radius:50%;background:var(--line);display:block}
 .progress i.ok{background:var(--good)} .progress i.no{background:var(--bad)} .progress i.now{background:var(--honey-strong)}
+.progress i.wait{background:transparent;border:3px solid var(--honey-strong)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .stat{border:1px solid var(--line);border-radius:12px;padding:12px}
 .stat b{display:block;font:700 1.6rem/1.2 var(--display);font-variant-numeric:tabular-nums}
@@ -111,7 +122,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 .sheet .lines{display:flex;gap:10px;flex-wrap:wrap}
 .sheet .lines i{flex:1;min-width:120px;border-bottom:1.5px solid var(--muted);height:28px;display:block}
 @media print{
-  body{background:#fff;color:#000;padding:0} .top,#v-home,#v-play,#v-settings,#v-kids,#v-setup,.noprint{display:none!important}
+  body{background:#fff;color:#000;padding:0} .top,#v-home,#v-play,#v-settings,#v-kids,#v-setup,#v-letters,.noprint{display:none!important}
   #v-stats{border:none;padding:0} #v-stats > *:not(#statsBody){display:none!important} #statsBody > *:not(.sheetwrap){display:none!important}
   .sheet .item{break-inside:avoid}
 }
@@ -163,7 +174,23 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <button id="goReview"><b>Review my misses</b><span id="reviewSub"></span></button>
       <button id="goBee"><b>Bee simulation</b><span>Say the word, spell it, say it again. One miss ends the round.</span></button>
     </div>
-    <div class="row"><button id="goStats">Progress</button><button id="goSettings">Settings</button><button class="link" id="switchKid">Switch speller</button></div>
+    <div class="verdict wait small" id="checkNote" hidden></div>
+    <div class="row"><button id="goStats">Progress</button><button id="goLetters">Letter check</button><button id="goSettings">Settings</button><button class="link" id="switchKid">Switch speller</button></div>
+  </section>
+
+  <!-- Letter check: the speller reads the alphabet so the app learns how Google hears them -->
+  <section class="card" id="v-letters" hidden>
+    <div class="row between"><h2>Letter check</h2><button class="link" id="lettersBack">Back</button></div>
+    <p class="muted" id="lettersIntro">Say each letter below out loud, slowly, with a little pause between them. This teaches the app how it hears your voice. It takes about a minute.</p>
+    <p class="small muted" id="lettersStep"></p>
+    <div class="abc" id="abc"></div>
+    <div id="lettersRec" style="display:grid;gap:10px">
+      <button class="mic primary" id="lettersMic"><span class="dot"></span><span id="lettersMicLbl">Tap and say these letters</span></button>
+      <div class="meter" aria-hidden="true"><span id="lettersLevel"></span></div>
+      <p class="status" id="lettersStatus" aria-live="polite"></p>
+    </div>
+    <div class="row" id="lettersNav" hidden><button class="primary" id="lettersNext">Next letters</button><button id="lettersRedo">Say these again</button></div>
+    <div id="lettersSummary" hidden style="display:grid;gap:10px"></div>
   </section>
 
   <!-- Playing a round -->
@@ -227,6 +254,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <label class="field">Voice speed<select id="setRate"><option value="0.75">Slow</option><option value="0.9">Normal</option><option value="1">Quick</option></select></label>
     </div>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
+    <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
     <h3>This device</h3>
     <label class="field">Worker URL<input id="setUrl" type="url"></label>
@@ -241,7 +269,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.2";
+const APP_VERSION = "1.3";
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -259,7 +287,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 let cfg = store.get("sb.cfg", null);          // {url, pass, model}
 let kidId = store.get("sb.kid", null);
 let doc = null;                                // {profile, attempts}
-const views = ["setup","kids","home","play","stats","settings"];
+const views = ["setup","kids","home","play","stats","settings","letters"];
 function show(v){ for (const x of views) $("v-"+x).hidden = x !== v; window.scrollTo(0,0); }
 
 function countdown(){
@@ -276,7 +304,7 @@ function pool(){ const ps = (doc && doc.profile.pages) || [2]; const seen = new 
   for (const p of ps) for (const x of pageWords(p)) if (!seen.has(x.w)) { seen.add(x.w); out.push(x); } return out; }
 function stats(d){                                 // per-word history, replayed in time order
   const m = new Map();
-  const list = (d.attempts || []).filter(a => !a.x).sort((a,b) => a.t - b.t);
+  const list = (d.attempts || []).filter(a => !a.x && !a.p).sort((a,b) => a.t - b.t);   // void and "needs a check" don't count
   for (const a of list){
     const s = m.get(a.w) || { n:0, ok:0, miss:0, box:0, last:0, streak:0, wrong:[] };
     s.n++; s.last = a.t;
@@ -296,8 +324,15 @@ function mergeDoc(a, b){
   for (const x of [...(a.attempts||[]), ...(b.attempts||[])]){ if (!x || !x.id) continue;
     const p = byId.get(x.id); if (!p || (x.u||x.t||0) >= (p.u||p.t||0)) byId.set(x.id, x); }
   const pa = a.profile, pb = b.profile;
-  return { profile: !pa ? pb : !pb ? pa : ((pb.updatedAt||0) >= (pa.updatedAt||0) ? pb : pa), attempts: [...byId.values()].sort((p,q)=>p.t-q.t) };
+  let profile = !pa ? pb : !pb ? pa : ((pb.updatedAt||0) >= (pa.updatedAt||0) ? pb : pa);
+  // keep the newest letter check even if the other copy's profile is newer
+  const al = [pa && pa.alpha, pb && pb.alpha].filter(Boolean).sort((x,y) => (y.at||0) - (x.at||0))[0];
+  if (profile && al && profile.alpha !== al) profile = { ...profile, alpha: al };
+  return { profile, attempts: [...byId.values()].sort((p,q)=>p.t-q.t) };
 }
+/* how Google hears this speller: words it writes for their letters, and letters it mixes up (see core.js) */
+const kidMap = (d = doc) => kidLetterMap(d && d.profile && d.profile.alpha, d && d.attempts);
+const pendingOf = d => ((d && d.attempts) || []).filter(a => a.p && !a.x).sort((a,b) => b.t - a.t);
 async function api(path, opts={}){
   const r = await fetch(cfg.url + path, { ...opts, headers: { "X-Passcode": cfg.pass, ...(opts.headers||{}) } });
   const d = await r.json().catch(() => ({ error: "Worker returned non-JSON (status "+r.status+")" }));
@@ -375,10 +410,17 @@ async function speak(text, ssml, plainFallback){
 }
 const say = text => speak(text, false);
 const xml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
-function sayLetters(prefix, w){
+function lettersSsml(prefix, w){
   const letters = targetForms(w)[0].split("");
-  const ssml = `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`;
-  speak(ssml, true, prefix + " " + letters.join(", ") + ".");
+  return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`,
+           plain: prefix + " " + letters.join(", ") + "." };
+}
+function sayLetters(prefix, w){ const x = lettersSsml(prefix, w); speak(x.ssml, true, x.plain); }
+/* fetch a clip ahead of time so it plays without a pause (it's saved on the device like any other clip) */
+function prefetch(text, ssml){
+  const voiceName = (doc && doc.profile.voice) || "en-US-Chirp3-HD-Kore", rate = (doc && doc.profile.rate) || 0.9;
+  if (voiceName === "device" || !cfg || ttsFailures >= 3) return;
+  ttsBlob(text, ssml, voiceName, rate).catch(() => {});
 }
 const spellOut = w => targetForms(w)[0].split("").join(", ");
 /* "say it slowly": each syllable with a pause, so the word can be heard in chunks */
@@ -390,8 +432,9 @@ function sayChunks(entry){
 }
 
 /* ================= microphone: raw samples + silence detection ================= */
-const R = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, lastSpeech:0, heard:false, floor:1, startedAt:0, onTick:null, buf:null };
-async function recStart(onTick){
+const R = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, lastSpeech:0, heard:false, floor:1, startedAt:0, onTick:null, buf:null, meter:null };
+async function recStart(onTick, meterEl){
+  R.meter = meterEl || $("level");
   R.stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, channelCount:1 } });
   R.ctx = new (window.AudioContext || window.webkitAudioContext)(); try{ await R.ctx.resume(); }catch(e){}
   R.rate = R.ctx.sampleRate; R.pcm = []; R.lastSpeech = 0; R.heard = false; R.floor = 1; R.startedAt = performance.now(); R.onTick = onTick; R.active = true;
@@ -403,7 +446,7 @@ async function recStart(onTick){
   R.timer = setInterval(() => {
     if (!R.an) return;
     R.an.getFloatTimeDomainData(R.buf); let s = 0; for (const v of R.buf) s += v*v; const rms = Math.sqrt(s / R.buf.length);
-    $("level").style.width = Math.min(100, rms*400) + "%";
+    if (R.meter) R.meter.style.width = Math.min(100, rms*400) + "%";
     R.floor = Math.min(R.floor + 0.0002, Math.max(rms, 0.001));
     const now = performance.now();
     if (rms > Math.max(0.02, R.floor*3)){ R.lastSpeech = now; R.heard = true; }
@@ -423,14 +466,33 @@ function recClip(t0, t1){                     // 16 kHz, 16-bit PCM between t0..
 function recStop(){
   R.active = false; clearInterval(R.timer); R.timer = null;
   try{ R.sp && R.sp.disconnect(); }catch(e){} try{ R.stream && R.stream.getTracks().forEach(t => t.stop()); }catch(e){} try{ R.ctx && R.ctx.close(); }catch(e){}
-  R.an = null; R.sp = null; $("level").style.width = "0";
+  R.an = null; R.sp = null; if (R.meter) R.meter.style.width = "0";
 }
 async function transcribe(blob, pass, w){
   const q = `pass=${pass}&enc=pcm&m=${encodeURIComponent(cfg.model || "default")}${w ? "&w=" + encodeURIComponent(w) : ""}`;
   return api("/speech?" + q, { method:"POST", headers:{ "Content-Type":"application/octet-stream" }, body: blob });
 }
 const textOf = d => wordsOf(d.results).map(t => t.w).join(" ");
-document.addEventListener("visibilitychange", () => { if (document.hidden && R.active){ recStop(); if (round) cancelListening("Paused while the app was in the background."); } });
+document.addEventListener("visibilitychange", () => { if (document.hidden && R.active){ recStop();
+  if (lMic === "listening") setLettersMic("idle", "Paused while the app was in the background.");
+  else if (round) cancelListening("Paused while the app was in the background."); } });
+/* the speller's recording of a "needs a check" word, kept on this device only so a grown-up can listen */
+const clipCacheName = "clips-v1", clipKey = id => "https://clip.cache/" + encodeURIComponent(id);
+function wavOf(pcm){                          // 16 kHz, 16-bit mono PCM -> WAV
+  const h = new DataView(new ArrayBuffer(44)), n = pcm.size, str = (o, t) => { for (let i = 0; i < t.length; i++) h.setUint8(o+i, t.charCodeAt(i)); };
+  str(0,"RIFF"); h.setUint32(4, 36+n, true); str(8,"WAVE"); str(12,"fmt "); h.setUint32(16,16,true); h.setUint16(20,1,true); h.setUint16(22,1,true);
+  h.setUint32(24,16000,true); h.setUint32(28,32000,true); h.setUint16(32,2,true); h.setUint16(34,16,true); str(36,"data"); h.setUint32(40,n,true);
+  return new Blob([h.buffer, pcm], { type:"audio/wav" });
+}
+async function saveClip(id, pcm){
+  try{ const c = await caches.open(clipCacheName); await c.put(clipKey(id), new Response(wavOf(pcm), { headers:{ "Content-Type":"audio/wav" } }));
+    const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - 60))) await c.delete(k); }catch(e){}
+}
+async function hasClip(id){ try{ return !!(await (await caches.open(clipCacheName)).match(clipKey(id))); }catch(e){ return false; } }
+async function playClip(id){
+  try{ const r = await (await caches.open(clipCacheName)).match(clipKey(id)); if (!r) return;
+    stopSpeech(); const url = URL.createObjectURL(await r.blob()); player.src = url; player.onended = () => URL.revokeObjectURL(url); await player.play(); }catch(e){}
+}
 
 /* ================= rounds ================= */
 let round = null;   // {mode, list, i, asked:Set, results:[], current, reask:[], len, phase}
@@ -480,12 +542,20 @@ function nextWord(){
   $("resultArea").hidden = true; $("summaryArea").hidden = true; $("spellArea").hidden = false; $("asks").hidden = false;
   $("typeIn").value = ""; setMic("idle"); renderDots();
   setTimeout(() => say(w.w), 250);
+  // meanwhile, get the "is spelled" clip for this word and the next word ready
+  setTimeout(() => { if (!round || round.current !== w) return; const x = lettersSsml(`The word ${w.w} is spelled`, w.w); prefetch(x.ssml, true);
+    const nx = peekNext(); if (nx) prefetch(nx.w, false); }, 1500);
+}
+function peekNext(){                           // the likely next word (practice can change once this word is scored)
+  if (!round) return null;
+  if (round.mode === "practice"){ try{ return wordForPractice({ ...round, asked: [...round.asked], reask: round.reask.map(x => ({ ...x })) }); }catch(e){ return null; } }
+  return (round.list || []).find(x => !round.asked.includes(x.w)) || null;
 }
 function renderDots(){
   const el = $("dots"); el.innerHTML = "";
   const n = round.mode === "bee" ? Math.min(round.results.length + 1, 40) : Math.max(round.len, round.results.length + 1);
   for (let i = 0; i < n; i++){ const d = document.createElement("i"); const r = round.results[i];
-    d.className = r ? (r.ok ? "ok" : "no") : (i === round.results.length ? "now" : ""); el.append(d); }
+    d.className = r ? (r.p ? "wait" : r.ok ? "ok" : "no") : (i === round.results.length ? "now" : ""); el.append(d); }
 }
 $("askWord").onclick = () => say(round.current.w);
 $("askDef").onclick = () => say(round.current.def);
@@ -528,11 +598,19 @@ async function finishPractice(){
   if (micState !== "listening") return;
   const dur = recDuration(); recStop(); setMic("checking");
   if (dur < 0.4){ setMic("idle", "I didn't hear anything. Tap and try again."); return; }
+  const w = round.current.w;
   try{
-    const d = await transcribe(recClip(0, dur), "letters");
-    const a = scoreBee([textOf(d)], round.current.w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, []);
+    const clip = recClip(0, dur);
+    const d = await transcribe(clip, "letters");
+    const km = kidMap(), raw = textOf(d);
+    const a = scoreBee([raw], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
     if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again, a little closer and slower."); return; }
-    showResult(a.verdict === "correct", a.final, "practice");
+    if (a.verdict === "correct") return showResult(true, a.final, "practice", "", { raw });
+    // a miss that differs only by letters that sound alike (T/D, M/N, or this speller's own mix-ups):
+    // hold it for a grown-up instead of marking it wrong
+    for (const h of [a.final, ...a.alts]){ const diffs = soundAlikeDiffs(h, w, km.pairs);
+      if (diffs) return showResult(false, h, "practice", "", { raw, pending: diffs, clip }); }
+    showResult(false, a.final, "practice", "", { raw });
   }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again, or type it."); }
 }
 
@@ -555,7 +633,7 @@ async function beeCheck(){
 async function finishBee(){
   if (micState !== "listening") return;
   const dur = recDuration(); recStop(); setMic("checking", "Locked in. Checking…");
-  const w = round.current.w;
+  const w = round.current.w, km = kidMap();
   try{
     const pl = await transcribe(recClip(0, dur), "plain", w);
     const st = beeStructure(pl.results, w, dur);
@@ -563,16 +641,16 @@ async function finishBee(){
     if (st.timed){
       const texts = await Promise.all(st.windows.map(([x,y]) => { const a0 = Math.max(0, x-0.05), a1 = Math.min(dur, y+0.05);
         return a1 - a0 < 0.25 ? "" : transcribe(recClip(a0, a1), "letters").then(textOf); }));
-      a = analyzeBeeWindows(st, texts, w, true);
+      a = analyzeBeeWindows(st, texts, w, true, km.tokens);
     } else {
-      a = analyzeBee(pl.results, (await transcribe(recClip(0, dur), "letters")).results, w, true);
+      a = analyzeBee(pl.results, (await transcribe(recClip(0, dur), "letters")).results, w, true, km.tokens);
     }
     if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again."); return; }
     let note = "";
     if (a.violation) note = `After “start over”, the letters can't change. First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
     else if (!a.locked) note = "Remember to say the word again at the end to lock in your answer.";
     if (!a.opening) note += (note ? " " : "") + "Remember to say the word before you spell it.";
-    showResult(a.verdict === "correct", a.final, "bee", note);
+    showResult(a.verdict === "correct", a.final, "bee", note, { raw: a.raw });
   }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again."); }
 }
 
@@ -582,24 +660,28 @@ $("typeBox").onsubmit = e => { e.preventDefault(); const t = clean($("typeIn").v
   showResult(isCorrect(t, round.current.w), t, "type"); };
 
 /* ---- result ---- */
-function showResult(ok, heard, mode, note){
+function showResult(ok, heard, mode, note, extra = {}){
   const w = round.current.w;
+  const pending = !ok && extra.pending ? extra.pending : null;     // "needs a check": sound-alike letters only
   const at = { id: uid(), t: Date.now(), u: Date.now(), w, ok, h: heard, m: mode };
+  if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
+  if (pending) at.p = 1;
   doc.attempts.push(at); saveLocal(); queueSync();
-  round.attemptId = at.id; round.results.push({ w, ok, h: heard });
+  if (pending && extra.clip) saveClip(at.id, extra.clip);
+  round.attemptId = at.id; round.results.push({ w, ok, h: heard, p: !!pending });
   if (!ok && round.mode !== "bee") round.reask.push({ w, at: round.asked.length });
   $("spellArea").hidden = true; $("resultArea").hidden = false; $("asks").hidden = false;
-  const v = $("verdict"); v.className = "verdict " + (ok ? "ok celebrate" : "no");
-  v.textContent = ok ? ["Correct!","You got it!","Nice spelling!","Perfect!"][Math.floor(Math.random()*4)] : "Not quite.";
+  const v = $("verdict"); v.className = "verdict " + (ok ? "ok celebrate" : pending ? "wait" : "no");
+  v.textContent = ok ? ["Correct!","You got it!","Nice spelling!","Perfect!"][Math.floor(Math.random()*4)] : pending ? "Let's check that one later." : "Not quite.";
   const tiles = $("tiles"); tiles.innerHTML = "";
-  for (const o of align(heard, w)){ const t = document.createElement("span"); t.className = "tile " + o.t; t.textContent = o.ch;
+  for (const o of align(heard, w)){ const t = document.createElement("span"); t.className = "tile " + (pending && o.t === "x" ? "q" : o.t); t.textContent = o.ch;
     if (o.t === "x" || o.t === "gap") t.title = "Should be: " + (o.want || "(nothing)"); tiles.append(t); }
   const forms = targetForms(w);
   // underline the letters of the right spelling that were missed or wrong (lined up the same way as the tiles)
   const marks = ok ? forms[0].split("").map(ch => esc(ch)) : align(heard, w).filter(o => o.want).map(o => o.t === "m" ? esc(o.want) : `<span class="w">${esc(o.want)}</span>`);
   $("answer").innerHTML = marks.join("")
     + (forms.length > 1 ? ` <span class="small muted">or ${esc(forms[1])}</span>` : "");
-  $("detail").textContent = (note ? note + " " : "") + (ok ? "" : mistakeNote(heard, w));
+  $("detail").textContent = (note ? note + " " : "") + (ok ? "" : pending ? pendingNote(pending) : mistakeNote(heard, w));
   // study aids are shown only after answering, because they give the spelling away
   const cw = round.current;
   $("study").innerHTML = `<dl style="margin:0">
@@ -612,7 +694,12 @@ function showResult(ok, heard, mode, note){
   $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
   renderDots();
   if (ok) say(v.textContent);
+  else if (pending) sayLetters(`Let's check that one later. The word ${w} is spelled`, w);
   else sayLetters(`The word ${w} is spelled`, w);
+}
+function pendingNote(diffs){
+  const U = c => c.toUpperCase();
+  return `It sounded like ${diffs.map(d => `${U(d.got)} where the word has ${U(d.want)}`).join(", and ")}. The app can mishear those letters, so this one waits for a grown-up to check. It doesn't count for or against you, and it will come back later.`;
 }
 function mistakeNote(h, w){
   const k = mistakeKinds(h, w); if (!k.length) return "";
@@ -625,11 +712,11 @@ $("redoBtn").onclick = () => {            // the app misheard: void this attempt
   $("resultArea").hidden = true; $("spellArea").hidden = false; setMic("idle", "Okay, let's try that again."); renderDots();
 };
 function override(ok){
-  const a = doc.attempts.find(x => x.id === round.attemptId); if (!a || a.ok === ok) return;
-  a.ok = ok; a.o = 1; a.u = Date.now(); saveLocal(); queueSync();
-  const r = round.results[round.results.length-1]; if (r) r.ok = ok;
+  const a = doc.attempts.find(x => x.id === round.attemptId); if (!a || (a.ok === ok && !a.p)) return;
+  a.ok = ok; a.o = 1; delete a.p; a.u = Date.now(); saveLocal(); queueSync();
+  const r = round.results[round.results.length-1]; if (r){ r.ok = ok; r.p = false; }
   if (ok){ const i = round.reask.findIndex(x => x.w === round.current.w); if (i >= 0) round.reask.splice(i,1); }
-  else if (round.mode !== "bee") round.reask.push({ w: round.current.w, at: round.asked.length });
+  else if (round.mode !== "bee" && !round.reask.some(x => x.w === round.current.w)) round.reask.push({ w: round.current.w, at: round.asked.length });
   const v = $("verdict"); v.className = "verdict " + (ok ? "ok" : "no"); v.textContent = ok ? "Marked right by a grown-up." : "Marked wrong by a grown-up.";
   $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
   renderDots();
@@ -640,12 +727,12 @@ $("quitRound").onclick = () => { if (R.active) recStop(); finishRound(); };
 function finishRound(){
   if (R.active) recStop();
   $("spellArea").hidden = true; $("resultArea").hidden = true; $("asks").hidden = true; $("summaryArea").hidden = false;
-  const ok = round.results.filter(r => r.ok).length, n = round.results.length;
+  const ok = round.results.filter(r => r.ok).length, n = round.results.length, waits = round.results.filter(r => r.p).length;
   $("summaryHead").textContent = round.mode === "bee"
     ? `You spelled ${ok} word${ok===1?"":"s"} in a row.` + (ok >= (doc.profile.bestBee||0) && ok > 0 ? " That's your best yet!" : "")
-    : n ? `${ok} of ${n} right this round.` : "No words this round.";
+    : (n ? `${ok} of ${n} right this round.` : "No words this round.") + (waits ? ` ${waits} waiting for a grown-up check.` : "");
   if (round.mode === "bee" && ok > (doc.profile.bestBee||0)){ doc.profile.bestBee = ok; doc.profile.updatedAt = Date.now(); saveLocal(); queueSync(); }
-  $("summaryRows").innerHTML = round.results.map(r => `<tr><td>${esc(r.w)}</td><td>${r.ok ? "✓" : "✗"}</td><td>${esc(r.h)}</td></tr>`).join("");
+  $("summaryRows").innerHTML = round.results.map(r => `<tr><td>${esc(r.w)}</td><td>${r.p ? "check" : r.ok ? "✓" : "✗"}</td><td>${esc(r.h)}</td></tr>`).join("");
 }
 $("againBtn").onclick = () => startRound(round.mode);
 $("homeBtn").onclick = () => { show("home"); renderHome(); };
@@ -686,12 +773,18 @@ function renderHome(){
   ].map(([b, s]) => `<div class="stat"><b>${b}</b>${s}</div>`).join("");
   $("practiceSub").textContent = due ? `${due} word${due===1?"":"s"} ready to review, plus new ones` : "New words from your pages";
   $("reviewSub").textContent = misses ? `${misses} word${misses===1?"":"s"} to fix` : "Nothing missed yet";
+  const pend = pendingOf(doc).length;
+  $("checkNote").hidden = !pend;
+  $("checkNote").innerHTML = pend ? `${pend} word${pend===1?"":"s"} waiting for a grown-up check. <button class="link" id="goChecks">Check now</button>` : "";
+  if (pend) $("goChecks").onclick = () => openStats();
+  $("goLetters").textContent = doc.profile.alpha ? "Letter check" : "Letter check (1 min)";
 }
 $("goPractice").onclick = () => startRound("practice");
 $("goReview").onclick = () => startRound("review");
 $("goBee").onclick = () => startRound("bee");
 $("goStats").onclick = () => openStats();
 $("goSettings").onclick = () => openSettings();
+$("goLetters").onclick = () => openLetters();
 $("switchKid").onclick = () => openKids();
 $("kidChip").onclick = () => { if (!R.active) openKids(); };
 
@@ -727,8 +820,20 @@ function openSettings(){
   $("setVoice").innerHTML = GOOGLE_VOICES.map(([v,l]) => `<option value="${v}">${l}</option>`).join("");
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
+  $("setLearned").textContent = learnedText(doc);
   show("settings");
 }
+function learnedText(d){
+  const km = kidMap(d), al = d.profile.alpha, U = c => c.toUpperCase(), out = [];
+  out.push(al ? `Letter check done ${new Date(al.at).toLocaleDateString()}.` : "No letter check yet.");
+  const toks = Object.entries(km.tokens).map(([t, L]) => `“${t}” as ${U(L)}`);
+  const prs = [...km.pairs].map(k => `${U(k[0])} heard as ${U(k[2])}`);
+  if (toks.length) out.push("Reads " + toks.join(", ") + ".");
+  if (prs.length) out.push("Holds these mix-ups for a grown-up: " + prs.join(", ") + ".");
+  out.push("Letters that sound alike for everyone (like T and D, M and N) are always held for a check in Practice.");
+  return out.join(" ");
+}
+$("setLetters").onclick = () => openLetters();
 $("setSave").onclick = () => {
   const pages = chipVals($("setPages"));
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
@@ -771,14 +876,14 @@ $("statsKid").onchange = async () => {
 };
 $("statsBack").onclick = () => { show("home"); renderHome(); };
 function renderStats(){
-  const d = statsDoc, st = stats(d), att = (d.attempts||[]).filter(a => !a.x), now = Date.now();
+  const d = statsDoc, st = stats(d), att = (d.attempts||[]).filter(a => !a.x && !a.p), now = Date.now();
   const pages = (d.profile && d.profile.pages) || [2];
   const week = att.filter(a => a.t >= now - 7*DAY), wk = week.length ? Math.round(100 * week.filter(a => a.ok).length / week.length) : null;
   const days = new Set(att.map(a => new Date(a.t).toDateString()));
   let streak = 0; for (let t = new Date(); days.has(t.toDateString()); t = new Date(t - DAY)) streak++;
   const poolW = []; const seenW = new Set(); for (const p of pages) for (const x of pageWords(p)) if (!seenW.has(x.w)){ seenW.add(x.w); poolW.push(x); }
   const mastered = poolW.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
-  let html = `<div class="stats">
+  let html = checksHtml(d) + `<div class="stats">
     <div class="stat"><b>${mastered} / ${poolW.length}</b>words mastered</div>
     <div class="stat"><b>${wk === null ? "—" : wk + "%"}</b>right in the last 7 days</div>
     <div class="stat"><b>${st.size}</b>words practiced</div>
@@ -810,6 +915,112 @@ function renderStats(){
   html += `<div><h3>Kinds of mistakes</h3>` + (Object.keys(kinds).length ? `<div class="bars" style="margin-top:8px">` +
     Object.entries(kinds).sort((a,b) => b[1]-a[1]).map(([k,c]) => `<div class="bar"><span>${MISTAKE_NAMES[k]}</span><div class="track"><div class="fill" style="width:${100*c/km}%"></div></div><span>${c}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
   $("statsBody").innerHTML = html;
+  wireChecks(d);
+}
+/* "Needs a check": misses that differed only by sound-alike letters. A grown-up listens (if the recording is on
+   this device) and decides; "Right" also teaches the app this speller's mix-up. */
+function checksHtml(d){
+  const pend = pendingOf(d); if (!pend.length) return "";
+  return `<div class="checks"><h3>Needs a grown-up check (${pend.length})</h3>
+    <p class="small muted">These matched the word except for letters the app can mishear. Play the recording if it's on this device, then decide. Highlighted letters are where it differed.</p>` +
+    pend.map(a => `<div class="checkitem" data-id="${esc(a.id)}">
+      <div class="row between"><b style="font:700 1.2rem var(--display)">${esc(a.w)}</b><span class="small muted">${esc(new Date(a.t).toLocaleDateString())}</span></div>
+      <div class="tiles">${align(a.h, a.w).map(o => `<span class="tile ${o.t === "x" ? "q" : o.t}">${esc(o.ch)}</span>`).join("")}</div>
+      <div class="row"><button data-act="play" hidden>🔊 Hear it</button><button class="good" data-act="right">They said it right</button><button class="bad" data-act="wrong">It was wrong</button>
+        <span class="small muted" data-msg></span></div></div>`).join("") + `</div>`;
+}
+function wireChecks(d){
+  for (const el of document.querySelectorAll("#statsBody .checkitem")){
+    const id = el.dataset.id, btn = act => el.querySelector(`[data-act="${act}"]`);
+    hasClip(id).then(h => { btn("play").hidden = !h; if (!h) el.querySelector("[data-msg]").textContent = "Recording isn't on this device."; });
+    btn("play").onclick = () => playClip(id);
+    btn("right").onclick = () => resolveCheck(d, id, true, el);
+    btn("wrong").onclick = () => resolveCheck(d, id, false, el);
+  }
+}
+async function resolveCheck(d, id, ok, el){
+  const a = (d.attempts || []).find(x => x.id === id); if (!a) return;
+  const before = { ...a };
+  a.ok = ok; a.o = 1; delete a.p; a.u = Date.now();
+  if (d === doc){ saveLocal(); queueSync(); renderStats(); return; }
+  // another speller's progress (picked in the Speller list): save it straight to the Worker
+  el.querySelectorAll("button").forEach(b => b.disabled = true);
+  try{
+    const merged = await api("/sync?kid=" + encodeURIComponent(d.profile.id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ profile: d.profile, attempts: d.attempts }) });
+    statsDoc = mergeDoc(d, merged); renderStats();
+  }catch(e){
+    Object.keys(a).forEach(k => delete a[k]); Object.assign(a, before);
+    el.querySelectorAll("button").forEach(b => b.disabled = false);
+    el.querySelector("[data-msg]").textContent = "Couldn't save (" + String(e.message || e).slice(0, 60) + "). Try again when online.";
+  }
+}
+
+/* ================= letter check ================= */
+const ABC_CHUNKS = ["abcdefghi", "jklmnopqr", "stuvwxyz"];
+let LC = null, lMic = "idle";
+function openLetters(){ if (R.active) recStop(); LC = { i:0, heard:{}, cur:null }; show("letters"); renderLetters(); }
+function abcCell(L, h){
+  const cls = h == null ? "" : h === L ? "ok" : h.length > 1 ? "tok" : "no";
+  const sub = h == null ? "" : h === L ? "✓" : h === "" ? "not caught" : h.length > 1 ? `heard “${h}”` : `heard ${h.toUpperCase()}`;
+  return `<div class="${cls}"><b>${L.toUpperCase()}</b><span>${esc(sub)}</span></div>`;
+}
+function renderLetters(){
+  const chunk = ABC_CHUNKS[LC.i], h = LC.cur;
+  $("lettersIntro").hidden = false; $("abc").hidden = false; $("lettersSummary").hidden = true;
+  $("lettersStep").textContent = `Part ${LC.i + 1} of ${ABC_CHUNKS.length}`;
+  $("abc").innerHTML = chunk.split("").map(L => abcCell(L, h ? h[L] : null)).join("");
+  $("lettersRec").hidden = !!h; $("lettersNav").hidden = !h;
+  $("lettersNext").textContent = LC.i < ABC_CHUNKS.length - 1 ? "Next letters" : "Finish";
+  setLettersMic("idle");
+}
+function setLettersMic(state, msg){
+  lMic = state; $("lettersMic").classList.toggle("recording", state === "listening");
+  $("lettersMicLbl").textContent = state === "idle" ? "Tap and say these letters" : state === "listening" ? "Listening… tap when done" : "Checking…";
+  $("lettersMic").disabled = state === "checking"; $("lettersStatus").textContent = msg || "";
+}
+$("lettersMic").onclick = async () => {
+  if (lMic === "listening") return finishLetters();
+  if (lMic !== "idle") return;
+  stopSpeech();
+  try{ await recStart(lettersTick, $("lettersLevel")); }
+  catch(e){ setLettersMic("idle", "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
+  setLettersMic("listening", "Say them slowly: " + ABC_CHUNKS[LC.i].toUpperCase().split("").join(", "));
+};
+function lettersTick(now){
+  if (now - R.startedAt > 40000) return finishLetters();
+  if (R.heard && R.lastSpeech && now - R.lastSpeech > 2500) finishLetters();
+}
+async function finishLetters(){
+  if (lMic !== "listening") return;
+  const dur = recDuration(); recStop(); setLettersMic("checking");
+  if (dur < 0.5){ setLettersMic("idle", "I didn't hear anything. Tap and try again."); return; }
+  try{
+    const d = await transcribe(recClip(0, dur), "letters");
+    LC.cur = alphaHeard(textOf(d), ABC_CHUNKS[LC.i]); renderLetters();
+    const miss = Object.values(LC.cur).filter(x => x === "").length;
+    $("lettersStatus").textContent = miss > 3 ? "Several letters weren't caught. Try saying these again, a little slower." : "";
+  }catch(e){ setLettersMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again."); }
+}
+$("lettersRedo").onclick = () => { LC.cur = null; renderLetters(); };
+$("lettersNext").onclick = () => {
+  Object.assign(LC.heard, LC.cur); LC.cur = null;
+  if (LC.i < ABC_CHUNKS.length - 1){ LC.i++; renderLetters(); } else finishAlphabet();
+};
+$("lettersBack").onclick = () => { if (R.active) recStop(); lMic = "idle"; show("home"); renderHome(); };
+function finishAlphabet(){
+  doc.profile.alpha = { at: Date.now(), heard: { ...LC.heard } }; doc.profile.updatedAt = Date.now(); saveLocal(); queueSync();
+  const all = ABC_CHUNKS.join("").split(""), h = LC.heard, U = c => c.toUpperCase();
+  const good = all.filter(L => h[L] === L), toks = all.filter(L => h[L] && h[L].length > 1), mix = all.filter(L => h[L] && h[L].length === 1 && h[L] !== L), lost = all.filter(L => !h[L]);
+  $("lettersIntro").hidden = true; $("abc").hidden = true; $("lettersRec").hidden = true; $("lettersNav").hidden = true; $("lettersStep").textContent = "";
+  $("lettersSummary").hidden = false;
+  $("lettersSummary").innerHTML = `<div class="verdict ok">Saved. ${good.length} of 26 letters were heard right away.</div>
+    <div class="abc">${all.map(L => abcCell(L, h[L] == null ? "" : h[L])).join("")}</div>
+    ${toks.length ? `<p><b>Learned:</b> ${toks.map(L => `“${esc(h[L])}” means ${U(L)}`).join(", ")}. The app will read these as letters from now on.</p>` : ""}
+    ${mix.length ? `<p><b>Mix-ups:</b> ${mix.map(L => `${U(L)} was heard as ${U(h[L])}`).join(", ")}. In Practice, a miss caused only by these will wait for a grown-up check instead of counting as wrong. Saying these letters slowly and clearly helps.</p>` : ""}
+    ${lost.length ? `<p><b>Not caught:</b> ${lost.map(U).join(", ")}. You can run the letter check again in a quieter spot.</p>` : ""}
+    <div class="row"><button class="primary" id="lettersDone">Done</button><button id="lettersAgain">Do it again</button></div>`;
+  $("lettersDone").onclick = () => { show("home"); renderHome(); };
+  $("lettersAgain").onclick = () => openLetters();
 }
 
 /* ================= start ================= */

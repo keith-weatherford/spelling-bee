@@ -52,6 +52,9 @@ function parseLetters(transcript, target, opts={}){
     if (opts.joined){ // cloud mode: letters, standard letter names, or a run of letters Google joined together
       if (t.length===1){ pieces.push([t]); continue; }
       if (CLOUD_NAMES[t]){ pieces.push([CLOUD_NAMES[t]]); continue; }
+      // this speller's own word-for-a-letter (learned from the letter check or a grown-up's "Mark right"):
+      // read it as that letter first, but keep the raw reading too
+      if (opts.map && opts.map[t]){ pieces.push([opts.map[t], t, ...nameVariants(t)]); continue; }
       if (["hyphen","dash","space","capital","uppercase","uh","um","er"].includes(t)) continue;
       // Google sometimes writes a letter as its name inside a joined run ("younwavering" for U-N-W...):
       // keep the raw reading first, plus readings with letter names swapped back to letters
@@ -70,7 +73,7 @@ function parseLetters(transcript, target, opts={}){
   let combos = [""];
   for (const p of pieces){ const n=[]; for (const c of combos) for (const o of p){ if(n.length<256) n.push(c+o); } combos=n; }
   const alts = [...new Set(combos)].filter(c=>c!==letters);
-  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined};
+  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined, pieces};
 }
 const NAME_SWAPS = [["you","u"],["why","y"],["are","r"],["see","c"],["bee","b"],["tee","t"],["tea","t"],["pee","p"],["jay","j"],
   ["kay","k"],["eye","i"],["oh","o"],["zee","z"],["dee","d"],["gee","g"],["vee","v"],["cue","q"],["ex","x"],["el","l"],["em","m"],["en","n"]];
@@ -245,11 +248,11 @@ function beeStructure(plainResults, target, duration){
   return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
 }
 /* score the spelling attempts (one text per window; the last one is the answer) */
-function scoreBee(attemptTexts, target, strict, st, notes){
+function scoreBee(attemptTexts, target, strict, st, notes, map){
   // after a start-over, the cut can catch the tail of "start over"; no bee word on the list starts with these
   attemptTexts = attemptTexts.map((a,k) => k===0 ? a : a.replace(/^\s*(?:(?:start|over|again|restart)\b\s*)+/i, "").replace(/^\s*(over|again)(?=[a-z]{2,})/i, ""));
   const parsed = attemptTexts.map(a => { const words = splitGlued(a.split(/\s+/).filter(Boolean).map(w=>({w, s:null, e:null})), target);
-    return parseLetters(words.map(x=>x.w).join(" "), target, {joined:true}); });
+    return parseLetters(words.map(x=>x.w).join(" "), target, {joined:true, map}); });
   const finalP = parsed[parsed.length-1] || {letters:"", alts:[], mergedWords:[], cloud:true};
   let verdict = verdictFor(finalP, target);
   let finalLetters = finalP.letters;
@@ -264,13 +267,13 @@ function scoreBee(attemptTexts, target, strict, st, notes){
     if (violation && verdict==="correct") verdict = "wrong";
   }
   if (!st.opening && strict) notes.push("Remember to say the word before spelling it.");
-  return { attempts: parsed.map(p=>p.letters), final: finalLetters, verdict, opening: !!st.opening, locked: !!st.closing,
+  return { attempts: parsed.map(p=>p.letters), final: finalLetters, alts: finalP.alts || [], raw: attemptTexts[attemptTexts.length-1] || "", verdict, opening: !!st.opening, locked: !!st.closing,
            restarts: st.restarts.length, violation, notes, plainText: st.plainText, timed: st.timed };
 }
 /* preferred: letters transcribed separately for each window of audio (letterTexts[i] for st.windows[i]) */
-function analyzeBeeWindows(st, letterTexts, target, strict){ return scoreBee(letterTexts, target, strict, st, []); }
+function analyzeBeeWindows(st, letterTexts, target, strict, map){ return scoreBee(letterTexts, target, strict, st, [], map); }
 /* fallback: one letter pass over the whole recording, split by word timestamps if Google gave them */
-function analyzeBee(plainResults, letterResults, target, strict){
+function analyzeBee(plainResults, letterResults, target, strict, map){
   const st = beeStructure(plainResults, target);
   const letters = splitGlued(wordsOf(letterResults), target);
   const notes = [];
@@ -281,6 +284,83 @@ function analyzeBee(plainResults, letterResults, target, strict){
     attempts = [letters.map(x=>x.w).join(" ")];
     if (st.restarts.length) notes.push("No timing from Google, so start-over couldn't be placed; scored the whole recording.");
   }
-  return scoreBee(attempts, target, strict, st, notes);
+  return scoreBee(attempts, target, strict, st, notes, map);
 }
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf};
+/* ---------- Each speller's letter map (pure; unit-tested) ----------
+   Learned two ways: the letter check (the speller reads A-Z) and a grown-up's "Mark right".
+   tokens: a word Google writes for one of this speller's letters ("be" for B)  -> read it as that letter
+   pairs:  a letter Google hears as a different letter for this speller ("l>o") -> a miss that differs only
+           by these is held as "needs a check" in Practice instead of being marked wrong (Bee mode stays strict) */
+// letters that sound alike for everyone (the "ee" letters, m/n, f/s, a/j/k)
+const SOUND_ALIKE = ["bcdegptvz", "mn", "fs", "ajk"];
+function soundsAlike(a, b){ return a !== b && SOUND_ALIKE.some(g => g.includes(a) && g.includes(b)); }
+/* Line up what Google wrote (pieces: each an array of readings, first = main) with the letters that were said.
+   ops: ok (matched), sub (one letter heard as another), token (a word heard for one letter), extra, miss */
+function alignPieces(pieces, exp){
+  const n = pieces.length, m = exp.length, INF = 1e9;
+  const D = [...Array(n+1)].map(() => Array(m+1).fill(INF)), B = [...Array(n+1)].map(() => Array(m+1).fill(null));
+  D[0][0] = 0;
+  const relax = (i, j, c, op) => { if (c < D[i][j] - 1e-9){ D[i][j] = c; B[i][j] = op; } };
+  for (let i=0;i<=n;i++) for (let j=0;j<=m;j++){
+    const c = D[i][j]; if (c >= INF) continue;
+    if (j < m) relax(i, j+1, c+1, {k:"miss", pi:i, pj:j, letters:exp[j]});
+    if (i >= n) continue;
+    const opts = [].concat(pieces[i]).filter(Boolean), main = opts[0] || "";
+    relax(i+1, j, c+1, {k:"extra", pi:i, pj:j, piece:main});
+    for (const o of opts) if (o && exp.startsWith(o, j)) relax(i+1, j+o.length, c, {k:"ok", pi:i, pj:j, piece:o, letters:o});
+    if (j < m && main.length === 1 && main !== exp[j]) relax(i+1, j+1, c+1, {k:"sub", pi:i, pj:j, piece:main, letters:exp[j]});
+    if (j < m && main.length >= 2 && main.length <= 6) relax(i+1, j+1, c+0.6, {k:"token", pi:i, pj:j, piece:main, letters:exp[j]});
+  }
+  const ops = []; let i = n, j = m;
+  while (i > 0 || j > 0){
+    const op = B[i][j]; if (!op) break;
+    ops.push(op); i = op.pi; j = op.pj;
+  }
+  return ops.reverse();
+}
+/* Letter check: what Google heard for each letter of one chunk ("" = not caught) */
+function alphaHeard(transcript, letters){
+  const p = parseLetters(transcript, "", {joined:true});
+  const heard = {}; for (const L of letters) heard[L] = "";
+  for (const op of alignPieces(p.pieces, letters)){
+    if (op.k === "ok") for (const L of op.letters) heard[L] = L;
+    else if (op.k === "sub" || op.k === "token") heard[op.letters] = op.piece;
+  }
+  return heard;
+}
+/* Build the map from the letter check (profile.alpha.heard) and grown-up corrections in the attempts */
+function kidLetterMap(alpha, attempts){
+  const tokens = {}, clash = new Set(), pairs = new Set(), corr = {};
+  const addTok = (t, L) => { if (clash.has(t)) return; if (tokens[t] && tokens[t] !== L){ delete tokens[t]; clash.add(t); } else tokens[t] = L; };
+  for (const [L, h] of Object.entries((alpha && alpha.heard) || {})){
+    if (!h || h === L) continue;
+    if (h.length === 1) pairs.add(L + ">" + h); else addTok(h, L);
+  }
+  for (const a of attempts || []){
+    // only spoken answers a grown-up marked right (typing mistakes aren't mishearings)
+    if (a.x || !a.o || !a.ok || a.m === "type" || !a.w) continue;
+    const exp = targetForms(a.w)[0]; if (!exp) continue;
+    const pieces = a.r ? parseLetters(a.r, a.w, {joined:true}).pieces : String(a.h || "").split("").map(c => [c]);
+    const ops = alignPieces(pieces, exp);
+    if (ops.filter(o => o.k !== "ok").length > 3) continue;     // too different to learn from safely
+    for (const o of ops){
+      if (o.k === "token") addTok(o.piece, o.letters);
+      // a letter-for-letter mix-up counts after two corrections (one lenient "Mark right" shouldn't change scoring)
+      if (o.k === "sub"){ const k = o.letters + ">" + o.piece; corr[k] = (corr[k] || 0) + 1; if (corr[k] >= 2) pairs.add(k); }
+    }
+  }
+  return { tokens, pairs };
+}
+/* If a miss differs from the right spelling only by letters that sound alike (for everyone, or for this speller),
+   return the differences [{want, got}]; otherwise null */
+function soundAlikeDiffs(heard, target, pairs){
+  for (const f of targetForms(target)){
+    if (!heard || heard.length !== f.length || heard === f) continue;
+    const diffs = [];
+    for (let i=0;i<f.length;i++) if (heard[i] !== f[i]) diffs.push({ want:f[i], got:heard[i], at:i });
+    if (diffs.length > 2) continue;
+    if (diffs.every(d => soundsAlike(d.want, d.got) || (pairs && pairs.has(d.want + ">" + d.got)))) return diffs;
+  }
+  return null;
+}
+if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike};
