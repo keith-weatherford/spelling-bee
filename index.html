@@ -93,11 +93,13 @@ label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
 .stat b{display:block;font:700 1.6rem/1.2 var(--display);font-variant-numeric:tabular-nums}
 .bars{display:grid;gap:8px}
 .bar{display:grid;grid-template-columns:7.5em 1fr 4.5em;gap:8px;align-items:center;font-size:.9rem}
+.bar.wide{grid-template-columns:minmax(7em,11em) 1fr auto}
 .bar .track{height:12px;border-radius:6px;background:var(--line);overflow:hidden}
 .bar .fill{height:100%;background:var(--honey-strong)}
 .bar .fill.good{background:var(--good)}
 .bar span:last-child{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
-.tablewrap{overflow-x:auto}
+.tablewrap{overflow-x:auto;max-width:100%}
+.card > *, #statsBody > *{min-width:0}   /* let wide tables scroll inside the card instead of widening the page */
 table{border-collapse:collapse;width:100%;font-size:.92rem;font-variant-numeric:tabular-nums}
 th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
@@ -172,6 +174,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <div class="big">
       <button class="primary" id="goPractice"><b>Practice</b><span id="practiceSub"></span></button>
       <button id="goReview"><b>Review my misses</b><span id="reviewSub"></span></button>
+      <button id="goPatterns"><b>Practice a pattern</b><span id="patternSub">Spelling rules like -LE endings, soft C, and IE</span></button>
       <button id="goBee"><b>Bee simulation</b><span>Say the word, spell it, say it again. One miss ends the round.</span></button>
     </div>
     <div class="verdict wait small" id="checkNote" hidden></div>
@@ -236,6 +239,13 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     </div>
   </section>
 
+  <!-- Practice a pattern: spelling rules found in the word list -->
+  <section class="card" id="v-patterns" hidden>
+    <div class="row between"><h2>Practice a pattern</h2><button class="link" id="patBack">Back</button></div>
+    <p class="muted">Each pattern is a spelling rule that shows up in your words. Pick one to practice words that follow it. Your trickiest patterns are listed first.</p>
+    <div class="checks" id="patList"></div>
+  </section>
+
   <!-- Progress -->
   <section class="card" id="v-stats" hidden>
     <div class="row between"><h2>Progress</h2><button class="link" id="statsBack">Back</button></div>
@@ -264,17 +274,19 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <h3>This device</h3>
     <label class="field">Worker URL<input id="setUrl" type="url"></label>
     <label class="field">Passcode<input id="setPass" type="password" autocomplete="off"></label>
-    <label class="field">Speech model<select id="setModel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select></label>
+    <label class="field">Speech recognizer<select id="setEngine"><option value="google">Google Cloud (best for letters)</option><option value="browser">This device's browser (Practice only)</option></select></label>
+    <p class="small muted" id="engineNote" style="margin-top:-6px"></p>
+    <label class="field">Speech model (Google Cloud)<select id="setModel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select></label>
     <div class="row"><button id="setDevSave">Save device settings</button><span class="status" id="setMsg"></span></div>
   </section>
 </main>
 
-<script src="words.js?v=1.4.1"></script>
-<script src="core.js?v=1.4.1"></script>
+<script src="words.js?v=1.5"></script>
+<script src="core.js?v=1.5"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.4.1";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.5";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -292,7 +304,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 let cfg = store.get("sb.cfg", null);          // {url, pass, model}
 let kidId = store.get("sb.kid", null);
 let doc = null;                                // {profile, attempts}
-const views = ["setup","kids","home","play","stats","settings","letters"];
+const views = ["setup","kids","home","play","stats","settings","letters","patterns"];
 function show(v){ for (const x of views) $("v-"+x).hidden = x !== v; window.scrollTo(0,0); }
 
 function countdown(){
@@ -478,7 +490,8 @@ async function transcribe(blob, pass, w){
   return api("/speech?" + q, { method:"POST", headers:{ "Content-Type":"application/octet-stream" }, body: blob });
 }
 const textOf = d => wordsOf(d.results).map(t => t.w).join(" ");
-document.addEventListener("visibilitychange", () => { if (document.hidden && R.active){ recStop();
+document.addEventListener("visibilitychange", () => { if (document.hidden && B.on){ bStop(true); if (round) cancelListening("Paused while the app was in the background."); return; }
+  if (document.hidden && R.active){ recStop();
   if (lMic === "listening") setLettersMic("idle", "Paused while the app was in the background.");
   else if (round) cancelListening("Paused while the app was in the background."); } });
 /* the speller's recording of a "needs a check" word, kept on this device only so a grown-up can listen */
@@ -522,16 +535,20 @@ function reviewList(){
   return pool().filter(x => { const s = st.get(x.w); return s && s.miss && (s.box <= 1 || s.last >= cutoff); })
     .sort((a,b) => st.get(b.w).miss - st.get(a.w).miss).slice(0, 15);
 }
-function startRound(mode){
-  round = { mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null };
+function startRound(mode, ruleId){
+  round = { mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null, rule: ruleId || null };
   if (mode === "review"){ round.list = reviewList(); round.len = round.list.length; }
+  if (mode === "pattern"){ round.list = patternList(ruleId); round.len = round.list.length;
+    if (!round.list.length){ alertHome("No words with that pattern on your pages."); return; } }
   if (mode === "bee"){ round.list = pool().slice().sort(() => Math.random() - 0.5); round.len = round.list.length; }
   if (mode === "review" && !round.list.length){ alertHome("No misses to review yet. Nice!"); return; }
-  $("playTitle").textContent = mode === "bee" ? "Bee simulation" : mode === "review" ? "Review my misses" : "Practice";
+  const rule = mode === "pattern" ? RULES.find(r => r.id === ruleId) : null;
+  $("playTitle").textContent = mode === "bee" ? "Bee simulation" : mode === "review" ? "Review my misses" : rule ? "Pattern: " + rule.name : "Practice";
   $("playHint").textContent = mode === "bee"
     ? "Say the word, spell it, then say the word again to lock it in. You may say “can I start over”, but the letters you already said can't change."
     : autoStop() ? "Spell the word out loud, one letter at a time. It checks when you stop talking, or tap Done." : "Spell the word out loud, one letter at a time, then tap Done.";
   if (mode === "bee" && !autoStop()) $("playHint").textContent += " Tap Done when you've said the word at the end.";
+  if (rule) $("playHint").textContent = rule.rule + " " + $("playHint").textContent;
   $("restartBtn").hidden = true; $("typeToggle").hidden = mode === "bee"; $("typeBox").hidden = true;
   $("askSlow").hidden = mode === "bee";   // a real bee pronouncer doesn't break the word into syllables
   show("play"); nextWord();
@@ -540,7 +557,7 @@ function alertHome(msg){ show("home"); renderHome(); $("practiceSub").textConten
 function nextWord(){
   let w;
   if (round.mode === "practice") w = wordForPractice(round);
-  else if (round.mode === "review"){ const ready = round.reask.findIndex(x => round.asked.length - x.at >= 3);
+  else if (round.mode === "review" || round.mode === "pattern"){ const ready = round.reask.findIndex(x => round.asked.length - x.at >= 3);
     w = ready >= 0 ? WORD_BY.get(round.reask.splice(ready,1)[0].w) : (round.list.find(x => !round.asked.includes(x.w)) || (round.reask.length ? WORD_BY.get(round.reask.shift().w) : null)); }
   else w = round.list.find(x => !round.asked.includes(x.w)) || null;
   if (!w) return finishRound();
@@ -591,6 +608,7 @@ $("micBtn").onclick = async () => {
   if (micState === "listening"){ finishListening(); return; }
   if (micState !== "idle") return;
   stopSpeech();
+  if (useBrowser()){ R.checking = false; setMic("listening"); bStart(); return; }
   try{ await recStart(round.mode === "bee" ? beeTick : practiceTick); }
   catch(e){ setMic("idle", "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
   R.checking = false; R.prompted = false;
@@ -598,7 +616,9 @@ $("micBtn").onclick = async () => {
 };
 $("doneBtn").onclick = () => finishListening();
 // Start over: throw away what was recorded; nothing is sent or scored, and the speller taps the mic again when ready
-$("restartBtn").onclick = () => { if (micState !== "listening") return; recStop(); setMic("idle", "Okay, start over. Tap when you're ready."); };
+$("restartBtn").onclick = async () => { if (micState !== "listening") return;
+  if (B.on) await bStop(true); else recStop();
+  setMic("idle", "Okay, start over. Tap when you're ready."); };
 function finishListening(){ if (round.mode === "bee") finishBee(); else finishPractice(); }
 function practiceTick(now){
   if (now - R.startedAt > (autoStop() ? 30000 : MAX_REC)) return finishPractice();
@@ -608,6 +628,7 @@ function practiceTick(now){
 /* ---- practice / review: one clip, letter recognition ---- */
 async function finishPractice(){
   if (micState !== "listening") return;
+  if (B.on) return finishBrowser();
   const dur = recDuration(); recStop(); setMic("checking");
   if (dur < 0.4){ setMic("idle", "I didn't hear anything. Tap and try again."); return; }
   const w = round.current.w;
@@ -624,6 +645,88 @@ async function finishPractice(){
       if (diffs) return showResult(false, h, "practice", "", { raw, pending: diffs, clip }); }
     showResult(false, a.final, "practice", "", { raw });
   }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again, or type it."); }
+}
+
+/* ---- this device's own speech recognizer (browser Web Speech API; Practice, Review and patterns only) ----
+   Like the test page's Mode A: listen in short bursts, restart after each pause, keep every guess the recognizer makes.
+   It never hands over the audio, so there's no recording for "needs a check" and Bee mode can't use it. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let srFailed = false;                       // after a failure, use Google Cloud for the rest of this visit
+const useBrowser = () => !!(cfg && cfg.engine === "browser" && SR && !srFailed && round && round.mode !== "bee");
+const B = { on:false, rec:null, segs:[], interim:"", live:false, heard:false, lastAt:0, startedAt:0, timer:null, watchdog:null, retried:false };
+function bStart(){
+  Object.assign(B, { on:true, segs:[], interim:"", live:false, heard:false, lastAt:0, startedAt:performance.now(), retried:false });
+  bOpen(); clearInterval(B.timer); B.timer = setInterval(bTick, 100);
+}
+function bOpen(){
+  let r;
+  try{ r = new SR(); }catch(e){ bFail(e.message || "unavailable"); return; }
+  r.lang = "en-US"; r.interimResults = true; r.maxAlternatives = 5; r.continuous = false;
+  B.rec = r; B.live = false; bLabel();
+  r.onstart = r.onaudiostart = () => { if (B.rec !== r) return; B.live = true; clearTimeout(B.watchdog); bLabel(); };
+  r.onresult = e => {
+    if (B.rec !== r) return;
+    B.interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++){ const res = e.results[i], alts = [...res].map(a => a.transcript.trim());
+      if (res.isFinal){ if (alts[0]) B.segs.push(alts); } else B.interim += " " + alts[0]; }
+    B.heard = true; B.lastAt = performance.now();
+  };
+  r.onerror = e => {
+    if (B.rec !== r || !B.on || e.error === "no-speech") return;
+    if (["not-allowed","service-not-allowed","audio-capture","network","language-not-supported","aborted"].includes(e.error)) bFail(e.error);
+  };
+  r.onend = () => {
+    if (B.rec !== r) return;
+    B.live = false; if (B.interim.trim()){ B.segs.push([B.interim.trim()]); B.interim = ""; }
+    if (!B.on) return;
+    bLabel(); try{ r.start(); }catch(err){ setTimeout(() => { if (B.on && !B.live && B.rec === r) bOpen(); }, 150); }
+  };
+  // iPads can get stuck if listening starts right after audio played: if the mic hasn't started in 2.5 s, try once more, then give up
+  clearTimeout(B.watchdog);
+  B.watchdog = setTimeout(() => { if (!B.on || B.live || B.rec !== r) return; bKill(r);
+    if (!B.retried){ B.retried = true; bOpen(); } else bFail("it didn't start"); }, 2500);
+  try{ r.start(); }catch(e){ bFail(e.message || "it didn't start"); }
+}
+function bKill(r){ if (!r) return; r.onend = r.onresult = r.onerror = r.onstart = r.onaudiostart = null; try{ r.abort(); }catch(e){} }
+function bLabel(){ if (micState === "listening" && B.on) $("micLbl").textContent = B.live ? "Listening…" : "One moment…"; }
+function bTick(){
+  if (!B.on || micState !== "listening") return;
+  const now = performance.now();
+  if (now - B.startedAt > (autoStop() ? 30000 : MAX_REC)) return finishPractice();
+  if (autoStop() && B.heard && now - B.lastAt > stopWait()) finishPractice();
+}
+/* stop listening; abort = throw away what was heard (Start over). Resolves once the last words are in. */
+function bStop(abort){
+  B.on = false; clearInterval(B.timer); clearTimeout(B.watchdog);
+  const r = B.rec;
+  return new Promise(res => {
+    if (!r){ res(); return; }
+    let done = false;
+    const fin = () => { if (done) return; done = true; if (!abort && B.interim.trim()){ B.segs.push([B.interim.trim()]); } B.interim = ""; B.rec = null; res(); };
+    if (abort){ bKill(r); B.segs = []; fin(); return; }
+    r.onend = fin; r.onerror = null;
+    try{ r.stop(); }catch(e){ fin(); }
+    setTimeout(fin, 1500);                 // some browsers never fire "end"
+  });
+}
+function bFail(why){
+  if (!B.on) return;
+  B.on = false; clearInterval(B.timer); clearTimeout(B.watchdog); bKill(B.rec); B.rec = null; srFailed = true;
+  setMic("idle", `This device's speech recognizer isn't working here (${why}). Switched to Google Cloud for now. Tap and spell again.`);
+}
+async function finishBrowser(){
+  setMic("checking"); await bStop(false);
+  const w = round.current.w, segs = B.segs.slice(), top = segs.map(s => s[0]).join(" ").trim();
+  if (!top){ setMic("idle", "I didn't hear any letters. Tap and try again."); return; }
+  const km = kidMap(), p = parseLetters(top, w, { map: km.tokens }), v = verdictFor(p, w, segs.length);
+  const extra = { raw: top, eng: "browser" };
+  if (v === "correct") return showResult(true, p.letters, "practice", "", extra);
+  // another of the recognizer's guesses spells the word: it wasn't sure, so a grown-up decides
+  if (v === "unsure" || anyAltCorrect(segs, w)) return showResult(false, p.letters, "practice", "", { ...extra, pending: [] });
+  if (v === "unclear"){ setMic("idle", `I heard “${top.slice(0, 40)}” but couldn't pick out every letter. Tap and try again, with a short pause between letters.`); return; }
+  for (const h of [p.letters, ...p.alts.slice(0, 60)]){ const diffs = soundAlikeDiffs(h, w, km.pairs);
+    if (diffs) return showResult(false, h, "practice", "", { ...extra, pending: diffs }); }
+  showResult(false, p.letters, "practice", "", extra);
 }
 
 /* ---- bee simulation: word, letters, word; start-over follows the Scripps rule ---- */
@@ -682,6 +785,7 @@ function showResult(ok, heard, mode, note, extra = {}){
   const at = { id: uid(), t: Date.now(), u: Date.now(), w, ok, h: heard, m: mode };
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
+  if (extra.eng === "browser") at.e = "b";
   doc.attempts.push(at); saveLocal(); queueSync();
   if (pending && extra.clip) saveClip(at.id, extra.clip);
   round.attemptId = at.id; round.results.push({ w, ok, h: heard, p: !!pending });
@@ -703,7 +807,8 @@ function showResult(ok, heard, mode, note, extra = {}){
   $("study").innerHTML = `<dl style="margin:0">
     <dt>Syllables</dt><dd class="syl">${esc(cw.syl || cw.w)}</dd>
     ${cw.parts ? `<dt>Word parts &amp; origin</dt><dd>${esc(cw.parts)}</dd>` : ""}
-    ${cw.trick ? `<dt>Memory trick</dt><dd>${esc(cw.trick)}</dd>` : ""}</dl>
+    ${cw.trick ? `<dt>Memory trick</dt><dd>${esc(cw.trick)}</dd>` : ""}
+    ${(() => { const rs = rulesOf(cw).slice(0, 3); return rs.length ? `<dt>Spelling patterns</dt>` + rs.map(r => `<dd><b>${esc(r.name)}:</b> ${esc(r.rule)}</dd>`).join("") : ""; })()}</dl>
     <div class="row"><button id="hearSlow">🔊 Say it slowly</button>${cw.trick ? '<button id="hearTrick">🔊 Hear the trick</button>' : ""}</div>`;
   $("hearSlow").onclick = () => sayChunks(cw);
   if ($("hearTrick")) $("hearTrick").onclick = () => say(cw.trick.replace(/\b([A-Z]{2,})\b/g, m => m.split("").join(" ")));
@@ -715,11 +820,52 @@ function showResult(ok, heard, mode, note, extra = {}){
 }
 function pendingNote(diffs){
   const U = c => c.toUpperCase();
+  if (!diffs.length) return "The speech recognizer wasn't sure about some letters (one of its guesses spells the word), so this one waits for a grown-up to check. It doesn't count for or against you, and it will come back later.";
   return `It sounded like ${diffs.map(d => `${U(d.got)} where the word has ${U(d.want)}`).join(", and ")}. The app can mishear those letters, so this one waits for a grown-up to check. It doesn't count for or against you, and it will come back later.`;
 }
 function mistakeNote(h, w){
+  // name the spelling rule that was broken when there is one; otherwise the general kind of mistake
+  const rm = ruleMistakes(h, w).slice(0, 2);
+  if (rm.length) return "Tip: " + rm.map(r => r.tip + (r.id === "nodouble" ? listDoubleNote(h) : "")).join(" ");
   const k = mistakeKinds(h, w); if (!k.length) return "";
   return "Tip: " + k.map(x => MISTAKE_TIPS[x]).join(" ");
+}
+/* e.g. "None of the 39 words with V on the list double it." (checked against the actual list) */
+function listDoubleNote(h){
+  const m = clean(h).match(/([hjkqvwxy])\1/); if (!m) return "";
+  const L = m[1], withL = WORDS.filter(x => clean(x.w).includes(L));
+  if (!withL.length || withL.some(x => clean(x.w).includes(L + L))) return "";
+  return ` None of the ${withL.length} words with ${L.toUpperCase()} on the list double it.`;
+}
+/* ================= spelling patterns ================= */
+const RULE_COUNT = {}; for (const r of RULES) RULE_COUNT[r.id] = WORDS.filter(x => r.tag(targetForms(x.w)[0] || "", x)).length;
+const rulesOf = entry => rulesFor(entry.w, entry).sort((a,b) => RULE_COUNT[a.id] - RULE_COUNT[b.id]);   // most specific first
+function patternList(ruleId){
+  const r = RULES.find(x => x.id === ruleId); if (!r) return [];
+  const st = stats(doc), now = Date.now();
+  const score = x => { const s = st.get(x.w); return !s ? 1 : s.miss && s.box <= 1 ? 3 : isDue(s, now) ? 2 : 0; };
+  return pool().filter(x => r.tag(targetForms(x.w)[0] || "", x))
+    .map(x => ({ x, k: score(x), m: (st.get(x.w)||{}).miss || 0, z: Math.random() }))
+    .sort((a,b) => b.k - a.k || b.m - a.m || a.z - b.z).slice(0, doc.profile.len || 10).map(o => o.x);
+}
+/* how often each rule was broken in wrong answers (voided and "needs a check" don't count) */
+function trickyPatterns(d){
+  const n = {};
+  for (const a of (d.attempts || [])) if (!a.x && !a.p && !a.ok && a.h) for (const r of ruleMistakes(a.h, a.w)) n[r.id] = (n[r.id] || 0) + 1;
+  return RULES.filter(r => n[r.id]).map(r => ({ id: r.id, name: r.name, n: n[r.id] })).sort((a,b) => b.n - a.n);
+}
+function openPatterns(){
+  const tricky = new Map(trickyPatterns(doc).map(t => [t.id, t.n]));
+  const p = pool();
+  const items = RULES.map(r => ({ r, words: p.filter(x => r.tag(targetForms(x.w)[0] || "", x)), miss: tricky.get(r.id) || 0 }))
+    .filter(o => o.words.length).sort((a,b) => b.miss - a.miss || b.words.length - a.words.length);
+  $("patList").innerHTML = items.map(o => `<div class="checkitem">
+      <div class="row between"><b style="font:700 1.15rem var(--display)">${esc(o.r.name)}</b>${o.miss ? `<span class="pill no">${o.miss} miss${o.miss===1?"":"es"}</span>` : ""}</div>
+      <p class="small">${esc(o.r.rule)}</p>
+      <div class="row between"><span class="small muted">${o.words.length} word${o.words.length===1?"":"s"} on your pages, like ${esc(o.words.slice(0,3).map(x => x.w).join(", "))}</span>
+        <button class="primary" data-rule="${o.r.id}">Practice</button></div></div>`).join("") || '<p class="muted">No patterns found on your pages.</p>';
+  for (const b of $("patList").querySelectorAll("button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
+  show("patterns");
 }
 $("nextBtn").onclick = () => { if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
 $("redoBtn").onclick = () => {            // the app misheard: void this attempt and try again
@@ -739,9 +885,10 @@ function override(ok){
 }
 $("markRight").onclick = () => override(true);
 $("markWrong").onclick = () => override(false);
-$("quitRound").onclick = () => { if (R.active) recStop(); finishRound(); };
+$("quitRound").onclick = () => { if (R.active) recStop(); if (B.on) bStop(true); finishRound(); };
 function finishRound(){
   if (R.active) recStop();
+  if (B.on) bStop(true);
   $("spellArea").hidden = true; $("resultArea").hidden = true; $("asks").hidden = true; $("summaryArea").hidden = false;
   const ok = round.results.filter(r => r.ok).length, n = round.results.length, waits = round.results.filter(r => r.p).length;
   $("summaryHead").textContent = round.mode === "bee"
@@ -750,7 +897,7 @@ function finishRound(){
   if (round.mode === "bee" && ok > (doc.profile.bestBee||0)){ doc.profile.bestBee = ok; doc.profile.updatedAt = Date.now(); saveLocal(); queueSync(); }
   $("summaryRows").innerHTML = round.results.map(r => `<tr><td>${esc(r.w)}</td><td>${r.p ? "check" : r.ok ? "✓" : "✗"}</td><td>${esc(r.h)}</td></tr>`).join("");
 }
-$("againBtn").onclick = () => startRound(round.mode);
+$("againBtn").onclick = () => startRound(round.mode, round.rule);
 $("homeBtn").onclick = () => { show("home"); renderHome(); };
 
 /* ================= mistakes ================= */
@@ -799,6 +946,8 @@ $("goPractice").onclick = () => startRound("practice");
 $("goReview").onclick = () => startRound("review");
 $("goBee").onclick = () => startRound("bee");
 $("goStats").onclick = () => openStats();
+$("goPatterns").onclick = () => openPatterns();
+$("patBack").onclick = () => { show("home"); renderHome(); };
 $("goSettings").onclick = () => openSettings();
 $("goLetters").onclick = () => openLetters();
 $("switchKid").onclick = () => openKids();
@@ -837,6 +986,7 @@ function openSettings(){
   $("setVoice").innerHTML = GOOGLE_VOICES.map(([v,l]) => `<option value="${v}">${l}</option>`).join("");
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
+  $("setEngine").value = cfg.engine === "browser" ? "browser" : "google"; engineNote();
   $("setLearned").textContent = learnedText(doc);
   show("settings");
 }
@@ -860,10 +1010,18 @@ $("setSave").onclick = () => {
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
-  cfg = { url: $("setUrl").value.trim().replace(/\/+$/,""), pass: $("setPass").value, model: $("setModel").value }; store.set("sb.cfg", cfg);
+  cfg = { url: $("setUrl").value.trim().replace(/\/+$/,""), pass: $("setPass").value, model: $("setModel").value, engine: $("setEngine").value }; store.set("sb.cfg", cfg);
+  srFailed = false;
   $("setMsg").textContent = "Checking…"; try{ await api("/kids"); $("setMsg").textContent = "Connected ✓"; }catch(e){ $("setMsg").textContent = "Not connected: " + e.message; }
 };
 $("setBack").onclick = () => { show("home"); renderHome(); };
+function engineNote(){
+  $("engineNote").textContent = $("setEngine").value === "google"
+    ? "Sends the recording through your Worker to Google Cloud. Works on every device."
+    : !SR ? "This browser doesn't have its own speech recognizer, so Google Cloud will be used."
+    : "Used for Practice, Review and patterns. Bee mode and the letter check still use Google Cloud. On an iPad this is Apple's recognizer and needs Wi-Fi. Save device settings to apply.";
+}
+$("setEngine").onchange = engineNote;
 $("setTest").onclick = () => {          // try the picked voice and speed without saving
   const keep = { voice: doc.profile.voice, rate: doc.profile.rate };
   doc.profile.voice = $("setVoice").value; doc.profile.rate = +$("setRate").value; ttsFailures = 0;
@@ -931,10 +1089,14 @@ function renderStats(){
   // mistake types
   const kinds = {}; for (const a of att) if (!a.ok) for (const k of mistakeKinds(a.h, a.w)) kinds[k] = (kinds[k]||0) + 1;
   const km = Math.max(1, ...Object.values(kinds));
+  const tp = trickyPatterns(d), tpm = Math.max(1, ...tp.map(t => t.n));
+  html += `<div><h3>Tricky patterns</h3><p class="small muted">Spelling rules broken in wrong answers.</p>` + (tp.length ? `<div class="bars" style="margin-top:8px">` +
+    tp.slice(0, 6).map(t => `<div class="bar wide"><span>${esc(t.name)}</span><div class="track"><div class="fill" style="width:${100*t.n/tpm}%"></div></div><span>${t.n}${d === doc ? ` <button class="link noprint" data-rule="${t.id}">Practice</button>` : ""}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
   html += `<div><h3>Kinds of mistakes</h3>` + (Object.keys(kinds).length ? `<div class="bars" style="margin-top:8px">` +
     Object.entries(kinds).sort((a,b) => b[1]-a[1]).map(([k,c]) => `<div class="bar"><span>${MISTAKE_NAMES[k]}</span><div class="track"><div class="fill" style="width:${100*c/km}%"></div></div><span>${c}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
   $("statsBody").innerHTML = html;
   wireChecks(d);
+  for (const b of document.querySelectorAll("#statsBody button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
 }
 /* "Needs a check": misses that differed only by sound-alike letters. A grown-up listens (if the recording is on
    this device) and decides; "Right" also teaches the app this speller's mix-up. */

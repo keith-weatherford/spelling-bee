@@ -60,6 +60,7 @@ function parseLetters(transcript, target, opts={}){
       // keep the raw reading first, plus readings with letter names swapped back to letters
       merged = true; pieces.push([t, ...nameVariants(t)]); continue;
     }
+    if (opts.map && opts.map[t]){ pieces.push([opts.map[t], t]); continue; }   // this speller's learned word-for-a-letter
     if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
     if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
     if (t.length===1){ pieces.push([t]); continue; }
@@ -338,7 +339,7 @@ function kidLetterMap(alpha, attempts){
   }
   for (const a of attempts || []){
     // only spoken answers a grown-up marked right (typing mistakes aren't mishearings)
-    if (a.x || !a.o || !a.ok || a.m === "type" || !a.w) continue;
+    if (a.x || !a.o || !a.ok || a.m === "type" || a.e === "b" || !a.w) continue;   // (e:"b" = the device's own recognizer, which mishears differently)
     const exp = targetForms(a.w)[0]; if (!exp) continue;
     const pieces = a.r ? parseLetters(a.r, a.w, {joined:true}).pieces : String(a.h || "").split("").map(c => [c]);
     const ops = alignPieces(pieces, exp);
@@ -363,4 +364,81 @@ function soundAlikeDiffs(heard, target, pairs){
   }
   return null;
 }
-if (typeof module!=="undefined") module.exports={parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike};
+/* ---------- Spelling rules (pure; unit-tested) ----------
+   Patterns that show up in the school list, written for kids. Each rule can
+   - tag a word it applies to (for the rule card and "Practice a pattern")
+   - spot a mistake that breaks it: cands(t) makes versions of the right spelling with that kind of mistake;
+     if one of them is closer to what the speller wrote than the right spelling is, the rule explains (part of) the miss */
+function subAll(t, re, wrongs){
+  const out = []; const g = new RegExp(re.source, "g"); let m;
+  while ((m = g.exec(t)) !== null){ for (const w of wrongs) out.push(t.slice(0, m.index) + w + t.slice(m.index + m[0].length)); if (!m[0].length) g.lastIndex++; }
+  return out;
+}
+const RULES = [
+  { id:"nodouble", name:"Letters that don't double",
+    rule:"H, J, K, Q, V, W, X and Y almost never come in pairs. For a doubled K sound, use CK.",
+    tag: w => /[vjx]/.test(w) || /(^|[^c])k/.test(w),
+    cands: t => { const out = []; for (let i = 0; i < t.length; i++) if ("hjkqvwxy".includes(t[i]) && t[i+1] !== t[i] && t[i-1] !== t[i]) out.push(t.slice(0, i+1) + t[i] + t.slice(i+1));
+                  return out.concat(subAll(t, /ck/, ["kk"])); },
+    tip: (h) => { const m = h.match(/([hjkqvwxy])\1/); return m ? `${m[1].toUpperCase()} is almost never doubled.` : "Use CK, not KK."; } },
+  { id:"ck", name:"CK after a short vowel",
+    rule:"After a short vowel, the K sound is usually spelled CK (click, crackle, rickety).",
+    tag: w => /ck/.test(w), cands: t => subAll(t, /ck/, ["k", "c", "kk", "cc"]) },
+  { id:"qu", name:"Q and U go together",
+    rule:"Q is always followed by U (quest, squeeze, harlequin).",
+    tag: w => /q/.test(w), cands: t => subAll(t, /qu/, ["q", "kw", "cw"]) },
+  { id:"softc", name:"Soft C",
+    rule:"C before E, I or Y sounds like S (mercy, citizen, recess). If you hear S before E, I or Y, think about whether the word uses C.",
+    tag: w => /c[eiy]/.test(w), cands: t => subAll(t, /c(?=[eiy])/, ["s", "ss"]).concat(subAll(t, /s(?=[eiy])/, ["c"])) },
+  { id:"le", name:"Endings -LE, -EL, -AL",
+    rule:"The “ul” sound at the end is usually -LE after a consonant (kibble, maple, griddle). Describing words often end in -AL (royal, abnormal).",
+    tag: w => /[^aeiou]le[sd]?$|als?$|els?$/.test(w),
+    cands: t => subAll(t, /le(?=[sd]?$)/, ["el", "al", "ul", "il"]).concat(subAll(t, /al(?=s?$)/, ["le", "el", "ul", "ol"]), subAll(t, /el(?=s?$)/, ["le", "al"])) },
+  { id:"tion", name:"-TION and -SION",
+    rule:"The “shun” sound is usually spelled -TION (narration, solution). -SION and -SSION are less common (mission, procession).",
+    tag: w => /[st]ion/.test(w), cands: t => subAll(t, /tion/, ["sion", "shun", "cion", "shion", "ssion"]).concat(subAll(t, /s?sion/, ["tion", "shun", "shion"])) },
+  { id:"ie", name:"IE and EI",
+    rule:"IE is much more common than EI (achieve, shriek, view). Remember: I before E, except after C.",
+    tag: w => /ie|ei/.test(w), cands: t => subAll(t, /ie/, ["ei", "ee", "ea"]).concat(subAll(t, /ei/, ["ie"])) },
+  { id:"ed", name:"The -ED ending",
+    rule:"Past-tense -ED stays -ED even when it sounds like T or D (scratched, borrowed, boasted).",
+    tag: (w, e) => /[a-z]{3}ed$/.test(w) && (!e || /verb|adjective/.test(e.pos || "")),
+    cands: t => /ed$/.test(t) ? [t.slice(0, -2) + "t", t.slice(0, -2) + "d", t.slice(0, -2) + "id", t.slice(0, -1)] : [] },
+  { id:"y", name:"Y at the end",
+    rule:"A long E sound at the end of a word is usually spelled Y (hurry, mercy, family).",
+    tag: w => /[^aeo]y$/.test(w) && /[aeiou]/.test(w.slice(0, -1)), cands: t => /[^aeo]y$/.test(t) ? ["ee", "ey", "ie", "i", "e", "ea"].map(x => t.slice(0, -1) + x) : [] },
+  { id:"double", name:"Short vowel, double consonant",
+    rule:"After a short vowel, the next consonant is often doubled (tabby, pudding, kibble, litter).",
+    tag: w => /([bdfglmnprstz])\1/.test(w),
+    cands: t => { const out = []; for (let i = 0; i + 1 < t.length; i++) if (t[i] === t[i+1] && "bcdfglmnprstz".includes(t[i])) out.push(t.slice(0, i) + t.slice(i+1)); return out; } },
+  { id:"silent", name:"Silent letters",
+    rule:"Some letters are silent: KN (knelt), WR (wrong, wry), GH (ghost).",
+    tag: w => /^kn|^wr|gh/.test(w), cands: t => subAll(t, /^kn/, ["n"]).concat(subAll(t, /^wr/, ["r"]), subAll(t, /gh/, ["g", ""])) },
+  { id:"ous", name:"The -OUS ending",
+    rule:"Describing words that end with an “us” sound are usually spelled -OUS (hilarious, courteous).",
+    tag: w => /ous$/.test(w), cands: t => subAll(t, /ous$/, ["us", "os", "ouse"]) },
+  { id:"ph", name:"PH spells F",
+    rule:"PH can spell the F sound (phalanx, aphorism).",
+    tag: w => /ph/.test(w), cands: t => subAll(t, /ph/, ["f", "ff"]) },
+  { id:"x", name:"X spells KS",
+    rule:"X spells a “ks” sound (relax, vexation, next).",
+    tag: w => /.x/.test(w), cands: t => subAll(t, /x/, ["ks", "cks", "cs", "kz"]) },
+];
+/* rules that apply to a word (entry = words.js entry, for part of speech) */
+function rulesFor(word, entry){ const t = targetForms(word)[0] || ""; return RULES.filter(r => r.tag(t, entry)); }
+/* rules a wrong spelling breaks, with a tip for each */
+function ruleMistakes(heard, word){
+  const h = clean(heard || ""); if (!h) return [];
+  const out = [];
+  for (const t of targetForms(word)){
+    if (h === t) return [];
+    const base = lev(t, h);
+    for (const r of RULES){
+      if (out.some(o => o.id === r.id)) continue;
+      if (r.cands(t).some(c => c !== t && lev(c, h) < base)) out.push({ id: r.id, name: r.name, tip: r.tip ? r.tip(h, t) : r.rule });
+    }
+    if (out.length) break;          // use the first spelling form that explains something
+  }
+  return out;
+}
+if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike};
