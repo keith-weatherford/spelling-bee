@@ -253,6 +253,11 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <label class="field">Reading voice<select id="setVoice"></select></label>
       <label class="field">Voice speed<select id="setRate"><option value="0.75">Slow</option><option value="0.9">Normal</option><option value="1">Quick</option></select></label>
     </div>
+    <div class="row">
+      <label class="field">Stop listening automatically<select id="setAuto"><option value="on">On: check after a pause</option><option value="off">Off: wait for Done</option></select></label>
+      <label class="field">Pause before it checks<select id="setWait"><option value="1.5">1.5 seconds</option><option value="2">2 seconds</option><option value="3">3 seconds</option><option value="4">4 seconds</option><option value="5">5 seconds</option></select></label>
+    </div>
+    <p class="small muted" style="margin-top:-6px">With it off, the speller taps Done when finished (Practice, Bee, and Letter check). Recording always stops at 55 seconds.</p>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
@@ -269,7 +274,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.3";
+const APP_VERSION = "1.4";
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -525,7 +530,8 @@ function startRound(mode){
   $("playTitle").textContent = mode === "bee" ? "Bee simulation" : mode === "review" ? "Review my misses" : "Practice";
   $("playHint").textContent = mode === "bee"
     ? "Say the word, spell it, then say the word again to lock it in. You may say “can I start over”, but the letters you already said can't change."
-    : "Spell the word out loud, one letter at a time. It checks when you stop talking, or tap Done.";
+    : autoStop() ? "Spell the word out loud, one letter at a time. It checks when you stop talking, or tap Done." : "Spell the word out loud, one letter at a time, then tap Done.";
+  if (mode === "bee" && !autoStop()) $("playHint").textContent += " Tap Done when you've said the word at the end.";
   $("restartBtn").hidden = true; $("typeToggle").hidden = mode === "bee"; $("typeBox").hidden = true;
   $("askSlow").hidden = mode === "bee";   // a real bee pronouncer doesn't break the word into syllables
   show("play"); nextWord();
@@ -573,8 +579,13 @@ function setMic(state, msg){
   b.disabled = state === "checking";
   $("doneBtn").hidden = state !== "listening";
   $("restartBtn").hidden = !(state === "listening" && round && round.mode !== "bee");
-  $("status").textContent = msg || (state === "listening" ? (round.mode === "bee" ? "Say the word, spell it, say the word again." : "Spell it. I'll check when you stop.") : "");
+  $("status").textContent = msg || (state === "listening" ? (round.mode === "bee" ? "Say the word, spell it, say the word again." + (autoStop() ? "" : " Then tap Done.")
+    : autoStop() ? "Spell it. I'll check when you stop." : "Spell it, then tap Done.") : "");
 }
+/* per-speller listening settings: auto-stop on/off and how long a pause counts as "done" */
+const autoStop = () => !doc || doc.profile.autoStop !== false;
+const stopWait = () => ((doc && +doc.profile.stopWait) || 2) * 1000;   // ms
+const MAX_REC = 55000;                                                // Google accepts up to 60 s
 function cancelListening(msg){ setMic("idle", msg); }
 $("micBtn").onclick = async () => {
   if (micState === "listening"){ finishListening(); return; }
@@ -586,11 +597,12 @@ $("micBtn").onclick = async () => {
   setMic("listening");
 };
 $("doneBtn").onclick = () => finishListening();
-$("restartBtn").onclick = async () => { recStop(); try{ await recStart(practiceTick); setMic("listening", "Starting over. Spell it from the beginning."); }catch(e){ setMic("idle"); } };
+// Start over: throw away what was recorded; nothing is sent or scored, and the speller taps the mic again when ready
+$("restartBtn").onclick = () => { if (micState !== "listening") return; recStop(); setMic("idle", "Okay, start over. Tap when you're ready."); };
 function finishListening(){ if (round.mode === "bee") finishBee(); else finishPractice(); }
 function practiceTick(now){
-  if (now - R.startedAt > 30000) return finishPractice();
-  if (R.heard && R.lastSpeech && now - R.lastSpeech > 2000) finishPractice();
+  if (now - R.startedAt > (autoStop() ? 30000 : MAX_REC)) return finishPractice();
+  if (autoStop() && R.heard && R.lastSpeech && now - R.lastSpeech > stopWait()) finishPractice();
 }
 
 /* ---- practice / review: one clip, letter recognition ---- */
@@ -616,10 +628,14 @@ async function finishPractice(){
 
 /* ---- bee simulation: word, letters, word; start-over follows the Scripps rule ---- */
 function beeTick(now){
-  if (now - R.startedAt > 55000) return finishBee();
-  if (R.heard && R.lastSpeech && now - R.lastSpeech > 1400 && !R.checking && !R.checkedSinceSpeech) beeCheck();
+  if (now - R.startedAt > MAX_REC) return finishBee();
+  // auto-stop on: after a pause, check whether the word was said again (lock-in); a bit sooner than Practice,
+  // since it only finishes once the word itself is heard at the end
+  const wait = Math.max(1000, stopWait() - 600);
+  if (autoStop() && R.heard && R.lastSpeech && now - R.lastSpeech > wait && !R.checking && !R.checkedSinceSpeech) beeCheck();
   if (R.lastSpeech > R.lastCheckAt) R.checkedSinceSpeech = false;
-  if (!R.prompted && R.lastSpeech && now - R.lastSpeech > 5000 && !R.checking){ R.prompted = true; $("status").textContent = "Say the word again to lock in your spelling, or say “start over”."; }
+  if (!R.prompted && R.lastSpeech && now - R.lastSpeech > Math.max(5000, wait + 2500) && !R.checking){ R.prompted = true;
+    $("status").textContent = autoStop() ? "Say the word again to lock in your spelling, or say “start over”." : "Say the word again to lock in your spelling, then tap Done."; }
 }
 async function beeCheck(){
   R.checking = true; R.checkedSinceSpeech = true; R.lastCheckAt = performance.now();
@@ -817,6 +833,7 @@ $("addKid").onclick = async () => {
 function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
+  $("setAuto").value = autoStop() ? "on" : "off"; $("setWait").value = String((doc && +doc.profile.stopWait) || 2); $("setWait").disabled = !autoStop();
   $("setVoice").innerHTML = GOOGLE_VOICES.map(([v,l]) => `<option value="${v}">${l}</option>`).join("");
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
@@ -834,10 +851,12 @@ function learnedText(d){
   return out.join(" ");
 }
 $("setLetters").onclick = () => openLetters();
+$("setAuto").onchange = () => { $("setWait").disabled = $("setAuto").value === "off"; };
 $("setSave").onclick = () => {
   const pages = chipVals($("setPages"));
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
-    len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value, updatedAt: Date.now() });
+    len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
+    autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value, updatedAt: Date.now() });
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
@@ -987,8 +1006,8 @@ $("lettersMic").onclick = async () => {
   setLettersMic("listening", "Say them slowly: " + ABC_CHUNKS[LC.i].toUpperCase().split("").join(", "));
 };
 function lettersTick(now){
-  if (now - R.startedAt > 40000) return finishLetters();
-  if (R.heard && R.lastSpeech && now - R.lastSpeech > 2500) finishLetters();
+  if (now - R.startedAt > (autoStop() ? 40000 : MAX_REC)) return finishLetters();
+  if (autoStop() && R.heard && R.lastSpeech && now - R.lastSpeech > stopWait() + 500) finishLetters();
 }
 async function finishLetters(){
   if (lMic !== "listening") return;
