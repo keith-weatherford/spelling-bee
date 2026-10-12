@@ -281,12 +281,12 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   </section>
 </main>
 
-<script src="words.js?v=1.5"></script>
-<script src="core.js?v=1.5"></script>
+<script src="words.js?v=1.6"></script>
+<script src="core.js?v=1.6"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.5";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.6";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -356,16 +356,61 @@ async function api(path, opts={}){
   if (!r.ok || d.error) throw new Error((d.error && (d.error.message || d.error)) || ("HTTP " + r.status));
   return d;
 }
-let syncTimer = null;
+/* Saving to the Worker, in batches: Cloudflare's free plan allows 1,000 storage writes a day.
+   Everything is saved on this device right away. Answers are marked "not saved yet" and sent together:
+   every 10 answers, at the end of a round, when the app goes to the background or closes, and every 5 minutes.
+   Profile changes (settings, letter check) go up within a few seconds. Only new or changed answers are sent;
+   the first save on each device after this update sends everything once. */
+const SYNC_BATCH = 10, SYNC_EVERY = 5 * 60 * 1000;
+let syncTimer = null, profilePending = false, syncing = null, syncAgain = false;
 function setSync(txt, cls){ const el = $("syncState"); el.textContent = txt; el.className = "pill " + (cls||"plain"); }
-function queueSync(){ clearTimeout(syncTimer); setSync("Saving…"); syncTimer = setTimeout(syncNow, 2000); }
-async function syncNow(){
+const dirtyKey = id => "sb.dirty." + id, fullKey = id => "sb.full." + id;
+const dirtyOf = id => new Set(store.get(dirtyKey(id), []));
+function showSyncState(){
   if (!doc) return;
-  try{
-    const merged = await api("/sync?kid=" + encodeURIComponent(doc.profile.id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(doc) });
-    doc = mergeDoc(doc, merged); saveLocal(); setSync("Saved ✓", "ok");
-  }catch(e){ setSync("Offline: will save later", "no"); }
+  const n = dirtyOf(doc.profile.id).size;
+  if (n) setSync(`Not saved yet (${n})`); else setSync("Saved ✓", "ok");
 }
+function markDirty(attemptId){                 // an answer was added or changed
+  const id = doc.profile.id, d = dirtyOf(id); d.add(attemptId); store.set(dirtyKey(id), [...d]);
+  if (d.size >= SYNC_BATCH) syncNow(); else showSyncState();
+}
+function queueSync(){                          // the profile changed (settings, letter check, best streak)
+  profilePending = true; clearTimeout(syncTimer); setSync("Saving soon…"); syncTimer = setTimeout(syncNow, 3000);
+}
+function needsSync(){ if (!doc) return false; const id = doc.profile.id; return profilePending || dirtyOf(id).size > 0 || !store.get(fullKey(id), false); }
+function syncIfNeeded(opts){ return needsSync() ? syncNow(opts) : Promise.resolve(); }
+function syncNow(opts = {}){
+  if (!doc || !cfg) return Promise.resolve();
+  clearTimeout(syncTimer); syncTimer = null;
+  if (syncing){ syncAgain = true; return syncing; }
+  const id = doc.profile.id, full = !store.get(fullKey(id), false), dirty = dirtyOf(id);
+  const attempts = full ? doc.attempts : doc.attempts.filter(a => dirty.has(a.id));
+  const sent = new Map(attempts.map(a => [a.id, a.u || a.t]));
+  const body = JSON.stringify({ profile: doc.profile, attempts });
+  profilePending = false; setSync("Saving…");
+  syncing = (async () => {
+    try{
+      const merged = await api("/sync?kid=" + encodeURIComponent(id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body,
+        keepalive: !!opts.keepalive && body.length < 60000 });      // keepalive lets the save finish while the app closes (64 KB max)
+      const mine = doc && doc.profile.id === id;
+      const local = mine ? doc : store.get("sb.doc." + id, { profile:null, attempts:[] });
+      const next = mergeDoc(local, merged);
+      store.set("sb.doc." + id, next); if (mine) doc = next;
+      // clear what went up, unless it was changed again while saving
+      const left = dirtyOf(id);
+      for (const [aid, u] of sent){ const a = next.attempts.find(x => x.id === aid); if (!a || (a.u || a.t) === u) left.delete(aid); }
+      store.set(dirtyKey(id), [...left]); store.set(fullKey(id), true);
+      if (mine) showSyncState();
+    }catch(e){ profilePending = true; setSync("Offline: will save later", "no"); }
+    finally{ syncing = null; if (syncAgain){ syncAgain = false; syncIfNeeded(); } }
+  })();
+  return syncing;
+}
+setInterval(() => syncIfNeeded(), SYNC_EVERY);
+// app hidden or closing: send what's waiting
+document.addEventListener("visibilitychange", () => { if (document.hidden) syncIfNeeded({ keepalive: true }); });
+window.addEventListener("pagehide", () => syncIfNeeded({ keepalive: true }));
 async function pullKid(id){
   const local = store.get("sb.doc."+id, null);
   try{ const remote = await api("/sync?kid=" + encodeURIComponent(id)); doc = mergeDoc(local || {profile:null, attempts:[]}, remote); }
@@ -786,7 +831,7 @@ function showResult(ok, heard, mode, note, extra = {}){
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
   if (extra.eng === "browser") at.e = "b";
-  doc.attempts.push(at); saveLocal(); queueSync();
+  doc.attempts.push(at); saveLocal(); markDirty(at.id);
   if (pending && extra.clip) saveClip(at.id, extra.clip);
   round.attemptId = at.id; round.results.push({ w, ok, h: heard, p: !!pending });
   if (!ok && round.mode !== "bee") round.reask.push({ w, at: round.asked.length });
@@ -869,13 +914,13 @@ function openPatterns(){
 }
 $("nextBtn").onclick = () => { if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
 $("redoBtn").onclick = () => {            // the app misheard: void this attempt and try again
-  const a = doc.attempts.find(x => x.id === round.attemptId); if (a){ a.x = 1; a.u = Date.now(); saveLocal(); queueSync(); }
+  const a = doc.attempts.find(x => x.id === round.attemptId); if (a){ a.x = 1; a.u = Date.now(); saveLocal(); markDirty(a.id); }
   round.results.pop(); if (round.reask.length && round.reask[round.reask.length-1].w === round.current.w) round.reask.pop();
   $("resultArea").hidden = true; $("spellArea").hidden = false; setMic("idle", "Okay, let's try that again."); renderDots();
 };
 function override(ok){
   const a = doc.attempts.find(x => x.id === round.attemptId); if (!a || (a.ok === ok && !a.p)) return;
-  a.ok = ok; a.o = 1; delete a.p; a.u = Date.now(); saveLocal(); queueSync();
+  a.ok = ok; a.o = 1; delete a.p; a.u = Date.now(); saveLocal(); markDirty(a.id);
   const r = round.results[round.results.length-1]; if (r){ r.ok = ok; r.p = false; }
   if (ok){ const i = round.reask.findIndex(x => x.w === round.current.w); if (i >= 0) round.reask.splice(i,1); }
   else if (round.mode !== "bee" && !round.reask.some(x => x.w === round.current.w)) round.reask.push({ w: round.current.w, at: round.asked.length });
@@ -894,7 +939,8 @@ function finishRound(){
   $("summaryHead").textContent = round.mode === "bee"
     ? `You spelled ${ok} word${ok===1?"":"s"} in a row.` + (ok >= (doc.profile.bestBee||0) && ok > 0 ? " That's your best yet!" : "")
     : (n ? `${ok} of ${n} right this round.` : "No words this round.") + (waits ? ` ${waits} waiting for a grown-up check.` : "");
-  if (round.mode === "bee" && ok > (doc.profile.bestBee||0)){ doc.profile.bestBee = ok; doc.profile.updatedAt = Date.now(); saveLocal(); queueSync(); }
+  if (round.mode === "bee" && ok > (doc.profile.bestBee||0)){ doc.profile.bestBee = ok; doc.profile.updatedAt = Date.now(); saveLocal(); profilePending = true; }
+  syncIfNeeded();                                // end of round: save what's waiting
   $("summaryRows").innerHTML = round.results.map(r => `<tr><td>${esc(r.w)}</td><td>${r.p ? "check" : r.ok ? "✓" : "✗"}</td><td>${esc(r.h)}</td></tr>`).join("");
 }
 $("againBtn").onclick = () => startRound(round.mode, round.rule);
@@ -968,7 +1014,7 @@ async function openKids(){
   if (!kids.length){ list.innerHTML = '<p class="muted">No spellers yet. Add one below.</p>'; $("addKidBox").open = true; return; }
   list.innerHTML = ""; $("addKidBox").open = false;
   for (const k of kids){ const b = document.createElement("button"); b.innerHTML = `🐝 <b>${esc(k.name)}</b>`;
-    b.onclick = async () => { b.disabled = true; await pullKid(k.id); if (!doc || !doc.profile){ b.disabled = false; return; } kidId = k.id; store.set("sb.kid", kidId); show("home"); renderHome(); setSync("Saved ✓","ok"); };
+    b.onclick = async () => { b.disabled = true; await syncIfNeeded(); await pullKid(k.id); if (!doc || !doc.profile){ b.disabled = false; return; } kidId = k.id; store.set("sb.kid", kidId); show("home"); renderHome(); syncIfNeeded(); showSyncState(); };
     list.append(b); }
 }
 $("addKid").onclick = async () => {
@@ -1051,7 +1097,7 @@ $("statsKid").onchange = async () => {
   else { $("statsBody").innerHTML = '<p class="muted">Loading…</p>'; try{ statsDoc = await api("/sync?kid=" + encodeURIComponent(id)); }catch(e){ $("statsBody").innerHTML = `<p class="muted">Couldn't load: ${esc(e.message)}</p>`; return; } }
   renderStats();
 };
-$("statsBack").onclick = () => { show("home"); renderHome(); };
+$("statsBack").onclick = () => { syncIfNeeded(); show("home"); renderHome(); };
 function renderStats(){
   const d = statsDoc, st = stats(d), att = (d.attempts||[]).filter(a => !a.x && !a.p), now = Date.now();
   const pages = (d.profile && d.profile.pages) || [2];
@@ -1123,11 +1169,11 @@ async function resolveCheck(d, id, ok, el){
   const a = (d.attempts || []).find(x => x.id === id); if (!a) return;
   const before = { ...a };
   a.ok = ok; a.o = 1; delete a.p; a.u = Date.now();
-  if (d === doc){ saveLocal(); queueSync(); renderStats(); return; }
+  if (d === doc){ saveLocal(); markDirty(a.id); renderStats(); return; }
   // another speller's progress (picked in the Speller list): save it straight to the Worker
   el.querySelectorAll("button").forEach(b => b.disabled = true);
   try{
-    const merged = await api("/sync?kid=" + encodeURIComponent(d.profile.id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ profile: d.profile, attempts: d.attempts }) });
+    const merged = await api("/sync?kid=" + encodeURIComponent(d.profile.id), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ profile: d.profile, attempts: [a] }) });
     statsDoc = mergeDoc(d, merged); renderStats();
   }catch(e){
     Object.keys(a).forEach(k => delete a[k]); Object.assign(a, before);
@@ -1211,7 +1257,7 @@ async function boot(){
   if (!kidId){ openKids(); return; }
   await pullKid(kidId);
   if (!doc || !doc.profile){ openKids(); return; }
-  show("home"); renderHome(); setSync("Saved ✓", "ok");
+  show("home"); renderHome(); showSyncState(); syncIfNeeded();
 }
 boot();
 </script>
