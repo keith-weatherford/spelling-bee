@@ -230,6 +230,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
         <button class="primary" id="nextBtn">Next word</button>
         <button id="redoBtn">That's not what I said</button>
       </div>
+      <div class="row between" id="autoNextBar" hidden style="background:var(--good-soft);color:var(--good);border-radius:12px;padding:8px 12px;font-weight:700"><span id="autoNextMsg">Next word coming up…</span><button id="stayBtn">Stay on this word</button></div>
       <div class="row small"><span class="muted">Grown-up check:</span><button class="link" id="markRight">Mark right</button><button class="link" id="markWrong">Mark wrong</button></div>
     </div>
     <div id="summaryArea" hidden style="display:grid;gap:12px">
@@ -268,6 +269,12 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
       <label class="field">Pause before it checks<select id="setWait"><option value="1.5">1.5 seconds</option><option value="2">2 seconds</option><option value="3">3 seconds</option><option value="4">4 seconds</option><option value="5">5 seconds</option></select></label>
     </div>
     <p class="small muted" style="margin-top:-6px">With it off, the speller taps Done when finished (Practice, Bee, and Letter check). Recording always stops at 55 seconds.</p>
+    <div class="row">
+      <label class="field">Start listening after the word is read<select id="setAutoListen"><option value="off">Off: tap to spell</option><option value="on">On</option></select></label>
+      <label class="field">Go to the next word when correct<select id="setAutoNext"><option value="off">Off: tap Next word</option><option value="on">On</option></select></label>
+      <label class="field">Pause before the next word<select id="setNextWait"><option value="1">1 second</option><option value="2">2 seconds</option><option value="4">4 seconds</option><option value="6">6 seconds</option></select></label>
+    </div>
+    <p class="small muted" style="margin-top:-6px"><b>Hands-free:</b> turn on these two and “Stop listening automatically.” Misses still wait for a tap. If nobody speaks for 15 seconds, it stops listening.</p>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
@@ -281,12 +288,12 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   </section>
 </main>
 
-<script src="words.js?v=1.6"></script>
-<script src="core.js?v=1.6"></script>
+<script src="words.js?v=1.7"></script>
+<script src="core.js?v=1.7"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.6";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.7";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -428,16 +435,19 @@ function pickVoice(){ const vs = (window.speechSynthesis && speechSynthesis.getV
   devVoice = vs.find(v => /en[-_]US/i.test(v.lang) && /samantha|google|natural|aria|jenny/i.test(v.name)) || vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; }
 if (window.speechSynthesis){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 function sayDevice(text, rate){
-  if (!window.speechSynthesis) return;
+  if (!window.speechSynthesis) return Promise.resolve();
   speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (devVoice) u.voice = devVoice;
-  u.rate = rate || 0.9; speechSynthesis.speak(u);
+  u.rate = rate || 0.9;
+  // resolves when the voice finishes (or after a generous timeout: some devices never fire "end")
+  return new Promise(res => { let t = setTimeout(res, 2500 + 90 * String(text).length); u.onend = u.onerror = () => { clearTimeout(t); res(); }; speechSynthesis.speak(u); });
 }
 const player = new Audio(); player.preload = "auto";
 let playerUnlocked = false, ttsFailures = 0, speakSeq = 0;
 // iPads only let a page play sound after a tap: play a silent clip on the first tap so later clips can play on their own
 const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
-document.addEventListener("pointerdown", () => { if (playerUnlocked) return; playerUnlocked = true; player.src = SILENT; player.play().catch(()=>{}); }, { once:false, capture:true });
-function stopSpeech(){ speakSeq++; try{ player.pause(); }catch(e){} if (window.speechSynthesis) speechSynthesis.cancel(); }
+document.addEventListener("pointerdown", () => { audioCtx(); if (playerUnlocked) return; playerUnlocked = true; player.src = SILENT; player.play().catch(()=>{}); }, { once:false, capture:true });
+let endSpeak = null;                            // finishes the current speak() early when something interrupts it
+function stopSpeech(){ speakSeq++; try{ player.pause(); }catch(e){} if (window.speechSynthesis) speechSynthesis.cancel(); if (endSpeak){ const f = endSpeak; endSpeak = null; f(); } }
 const ttsCacheName = "tts-v1";
 async function ttsBlob(text, ssml, voiceName, rate){
   const q = `t=${encodeURIComponent(text)}&v=${encodeURIComponent(voiceName)}&r=${rate}${ssml ? "&s=1" : ""}`;
@@ -451,23 +461,30 @@ async function ttsBlob(text, ssml, voiceName, rate){
   return blob;
 }
 /* say(text) reads plain text; sayLetters(word) spells it out letter by letter */
+/* speak() resolves when the audio has finished: true if it played to the end, false if something interrupted it
+   (used to start listening right after the word is read) */
 async function speak(text, ssml, plainFallback){
+  if (endSpeak){ const f = endSpeak; endSpeak = null; f(); }        // an earlier clip is being replaced
   const seq = ++speakSeq;
   const voiceName = (doc && doc.profile.voice) || "en-US-Chirp3-HD-Kore";
   const rate = (doc && doc.profile.rate) || 0.9;
-  if (voiceName === "device" || !cfg || ttsFailures >= 3){ sayDevice(plainFallback || text, rate); return; }
+  const viaDevice = async () => { await sayDevice(plainFallback || text, rate); return seq === speakSeq; };
+  if (voiceName === "device" || !cfg || ttsFailures >= 3) return viaDevice();
   if (window.speechSynthesis) speechSynthesis.cancel();
   try{
     const blob = await ttsBlob(text, ssml, voiceName, rate);
-    if (seq !== speakSeq) return;                       // something newer was asked for meanwhile
+    if (seq !== speakSeq) return false;                 // something newer was asked for meanwhile
     const url = URL.createObjectURL(blob);
+    const done = new Promise(res => { endSpeak = () => res(false);
+      player.onended = () => { URL.revokeObjectURL(url); res(true); }; player.onerror = () => res(false); });
     player.src = url; await player.play();
-    player.onended = () => URL.revokeObjectURL(url);
     ttsFailures = 0;
+    const ok = await done; if (endSpeak && seq === speakSeq) endSpeak = null;
+    return ok && seq === speakSeq;
   }catch(e){
-    if (seq !== speakSeq) return;
+    if (seq !== speakSeq) return false;
     ttsFailures++; console.warn("Google voice unavailable, using device voice:", e.message || e);
-    sayDevice(plainFallback || text, rate);
+    return viaDevice();
   }
 }
 const say = text => speak(text, false);
@@ -477,7 +494,7 @@ function lettersSsml(prefix, w){
   return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`,
            plain: prefix + " " + letters.join(", ") + "." };
 }
-function sayLetters(prefix, w){ const x = lettersSsml(prefix, w); speak(x.ssml, true, x.plain); }
+function sayLetters(prefix, w){ const x = lettersSsml(prefix, w); return speak(x.ssml, true, x.plain); }
 /* fetch a clip ahead of time so it plays without a pause (it's saved on the device like any other clip) */
 function prefetch(text, ssml){
   const voiceName = (doc && doc.profile.voice) || "en-US-Chirp3-HD-Kore", rate = (doc && doc.profile.rate) || 0.9;
@@ -488,19 +505,27 @@ const spellOut = w => targetForms(w)[0].split("").join(", ");
 /* "say it slowly": each syllable with a pause, so the word can be heard in chunks */
 function sayChunks(entry){
   const parts = String(entry.syl || entry.w).split("·");
-  if (parts.length < 2){ speak(`<speak><prosody rate="slow">${xml(entry.w)}</prosody></speak>`, true, entry.w); return; }
+  if (parts.length < 2) return speak(`<speak><prosody rate="slow">${xml(entry.w)}</prosody></speak>`, true, entry.w);
   const ssml = "<speak>" + parts.map(p => `<prosody rate="slow">${xml(p)}</prosody>`).join('<break time="450ms"/>') + `<break time="700ms"/>${xml(entry.w)}</speak>`;
-  speak(ssml, true, parts.join(", ") + ". " + entry.w);
+  return speak(ssml, true, parts.join(", ") + ". " + entry.w);
 }
 
 /* ================= microphone: raw samples + silence detection ================= */
 const R = { active:false, stream:null, ctx:null, an:null, sp:null, pcm:[], rate:48000, timer:null, lastSpeech:0, heard:false, floor:1, startedAt:0, onTick:null, buf:null, meter:null };
+/* One audio context for the whole visit, unlocked by the first tap: iPads (and some Android browsers) only let
+   the mic start on its own (hands-free) if the audio system was started by an earlier tap. */
+let sharedCtx = null;
+function audioCtx(){
+  try{ if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (sharedCtx.state === "suspended") sharedCtx.resume().catch(() => {}); }catch(e){}
+  return sharedCtx;
+}
 async function recStart(onTick, meterEl){
   R.meter = meterEl || $("level");
   R.stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, channelCount:1 } });
-  R.ctx = new (window.AudioContext || window.webkitAudioContext)(); try{ await R.ctx.resume(); }catch(e){}
+  R.ctx = audioCtx(); try{ await R.ctx.resume(); }catch(e){}
   R.rate = R.ctx.sampleRate; R.pcm = []; R.lastSpeech = 0; R.heard = false; R.floor = 1; R.startedAt = performance.now(); R.onTick = onTick; R.active = true;
-  const src = R.ctx.createMediaStreamSource(R.stream);
+  const src = R.ctx.createMediaStreamSource(R.stream); R.src = src;
   R.an = R.ctx.createAnalyser(); R.an.fftSize = 1024; src.connect(R.an); R.buf = new Float32Array(R.an.fftSize);
   R.sp = R.ctx.createScriptProcessor(4096, 1, 1);
   R.sp.onaudioprocess = e => { if (R.active) R.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
@@ -527,8 +552,8 @@ function recClip(t0, t1){                     // 16 kHz, 16-bit PCM between t0..
 }
 function recStop(){
   R.active = false; clearInterval(R.timer); R.timer = null;
-  try{ R.sp && R.sp.disconnect(); }catch(e){} try{ R.stream && R.stream.getTracks().forEach(t => t.stop()); }catch(e){} try{ R.ctx && R.ctx.close(); }catch(e){}
-  R.an = null; R.sp = null; if (R.meter) R.meter.style.width = "0";
+  try{ R.sp && R.sp.disconnect(); }catch(e){} try{ R.src && R.src.disconnect(); }catch(e){} try{ R.stream && R.stream.getTracks().forEach(t => t.stop()); }catch(e){}
+  R.an = null; R.sp = null; R.src = null; R.auto = false; if (R.meter) R.meter.style.width = "0";      // the shared audio context stays open
 }
 async function transcribe(blob, pass, w){
   const q = `pass=${pass}&enc=pcm&m=${encodeURIComponent(cfg.model || "default")}${w ? "&w=" + encodeURIComponent(w) : ""}`;
@@ -609,7 +634,7 @@ function nextWord(){
   round.current = w; round.asked.push(w.w); round.attemptId = null;
   $("resultArea").hidden = true; $("summaryArea").hidden = true; $("spellArea").hidden = false; $("asks").hidden = false;
   $("typeIn").value = ""; setMic("idle"); renderDots();
-  setTimeout(() => say(w.w), 250);
+  setTimeout(async () => { if (!round || round.current !== w) return; const done = await say(w.w); if (done) autoListen(w); }, 250);
   // meanwhile, get the "is spelled" clip for this word and the next word ready
   setTimeout(() => { if (!round || round.current !== w) return; const x = lettersSsml(`The word ${w.w} is spelled`, w.w); prefetch(x.ssml, true);
     const nx = peekNext(); if (nx) prefetch(nx.w, false); }, 1500);
@@ -625,12 +650,12 @@ function renderDots(){
   for (let i = 0; i < n; i++){ const d = document.createElement("i"); const r = round.results[i];
     d.className = r ? (r.p ? "wait" : r.ok ? "ok" : "no") : (i === round.results.length ? "now" : ""); el.append(d); }
 }
-$("askWord").onclick = () => say(round.current.w);
-$("askDef").onclick = () => say(round.current.def);
-$("askSent").onclick = () => say(round.current.sent);
-$("askPos").onclick = () => say(round.current.pos);
-$("askOrigin").onclick = () => say(round.current.parts || "Sorry, I don't have the origin for this word.");
-$("askSlow").onclick = () => sayChunks(round.current);
+$("askWord").onclick = () => ask(() => say(round.current.w));
+$("askDef").onclick = () => ask(() => say(round.current.def));
+$("askSent").onclick = () => ask(() => say(round.current.sent));
+$("askPos").onclick = () => ask(() => say(round.current.pos));
+$("askOrigin").onclick = () => ask(() => say(round.current.parts || "Sorry, I don't have the origin for this word."));
+$("askSlow").onclick = () => ask(() => sayChunks(round.current));
 
 /* ---- mic button states ---- */
 let micState = "idle";
@@ -648,17 +673,38 @@ function setMic(state, msg){
 const autoStop = () => !doc || doc.profile.autoStop !== false;
 const stopWait = () => ((doc && +doc.profile.stopWait) || 2) * 1000;   // ms
 const MAX_REC = 55000;                                                // Google accepts up to 60 s
+/* hands-free settings (per speller): start listening after the word is read; next word after a correct answer */
+const autoListenOn = () => !!(doc && doc.profile.autoListen);
+const autoNextOn = () => !!(doc && doc.profile.autoNext);
+const nextWait = () => ((doc && +doc.profile.nextWait) || 2) * 1000;
+const NO_SPEECH_STOP = 15000;                                         // auto-started mic with nobody talking: stop, send nothing
+function canAutoListen(w){
+  return autoListenOn() && round && round.current === w && micState === "idle" && !$("v-play").hidden
+    && $("resultArea").hidden && $("summaryArea").hidden && $("typeBox").hidden && !document.hidden;
+}
+function autoListen(w){ if (canAutoListen(w)) startListening(true); }
+/* questions (definition, sentence...): stop listening first so the recording doesn't pick up the app's voice,
+   then start listening again when the answer has been read */
+async function ask(play){
+  if (micState === "listening"){ if (B.on) await bStop(true); else recStop(); setMic("idle"); }
+  if (micState !== "idle" || !round) { play(); return; }
+  const w = round.current, wasAuto = autoListenOn();
+  const done = await play();
+  if (done && wasAuto) autoListen(w);
+}
 function cancelListening(msg){ setMic("idle", msg); }
-$("micBtn").onclick = async () => {
-  if (micState === "listening"){ finishListening(); return; }
+$("micBtn").onclick = () => { if (micState === "listening"){ finishListening(); return; } startListening(false); };
+async function startListening(auto){
   if (micState !== "idle") return;
-  stopSpeech();
-  if (useBrowser()){ R.checking = false; setMic("listening"); bStart(); return; }
+  stopSpeech(); cancelAutoNext();
+  if (useBrowser()){ R.checking = false; setMic("listening"); bStart(auto); return; }
   try{ await recStart(round.mode === "bee" ? beeTick : practiceTick); }
-  catch(e){ setMic("idle", "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
-  R.checking = false; R.prompted = false;
+  catch(e){ setMic("idle", auto ? "Tap and spell when you're ready." : "The microphone isn't available: " + (e.name || e) + ". Check the browser's mic permission."); return; }
+  R.checking = false; R.prompted = false; R.auto = auto;
   setMic("listening");
-};
+}
+/* mic started by itself and nobody has said anything: stop without sending anything to Google */
+function noSpeechStop(heard, startedAt, now){ return !heard && now - startedAt > NO_SPEECH_STOP; }
 $("doneBtn").onclick = () => finishListening();
 // Start over: throw away what was recorded; nothing is sent or scored, and the speller taps the mic again when ready
 $("restartBtn").onclick = async () => { if (micState !== "listening") return;
@@ -666,6 +712,7 @@ $("restartBtn").onclick = async () => { if (micState !== "listening") return;
   setMic("idle", "Okay, start over. Tap when you're ready."); };
 function finishListening(){ if (round.mode === "bee") finishBee(); else finishPractice(); }
 function practiceTick(now){
+  if (R.auto && noSpeechStop(R.heard, R.startedAt, now)){ recStop(); setMic("idle", "Tap and spell when you're ready."); return; }
   if (now - R.startedAt > (autoStop() ? 30000 : MAX_REC)) return finishPractice();
   if (autoStop() && R.heard && R.lastSpeech && now - R.lastSpeech > stopWait()) finishPractice();
 }
@@ -699,8 +746,8 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let srFailed = false;                       // after a failure, use Google Cloud for the rest of this visit
 const useBrowser = () => !!(cfg && cfg.engine === "browser" && SR && !srFailed && round && round.mode !== "bee");
 const B = { on:false, rec:null, segs:[], interim:"", live:false, heard:false, lastAt:0, startedAt:0, timer:null, watchdog:null, retried:false };
-function bStart(){
-  Object.assign(B, { on:true, segs:[], interim:"", live:false, heard:false, lastAt:0, startedAt:performance.now(), retried:false });
+function bStart(auto){
+  Object.assign(B, { on:true, segs:[], interim:"", live:false, wasLive:false, heard:false, lastAt:0, startedAt:performance.now(), retried:false, auto:!!auto });
   bOpen(); clearInterval(B.timer); B.timer = setInterval(bTick, 100);
 }
 function bOpen(){
@@ -708,7 +755,7 @@ function bOpen(){
   try{ r = new SR(); }catch(e){ bFail(e.message || "unavailable"); return; }
   r.lang = "en-US"; r.interimResults = true; r.maxAlternatives = 5; r.continuous = false;
   B.rec = r; B.live = false; bLabel();
-  r.onstart = r.onaudiostart = () => { if (B.rec !== r) return; B.live = true; clearTimeout(B.watchdog); bLabel(); };
+  r.onstart = r.onaudiostart = () => { if (B.rec !== r) return; B.live = true; B.wasLive = true; clearTimeout(B.watchdog); bLabel(); };
   r.onresult = e => {
     if (B.rec !== r) return;
     B.interim = "";
@@ -737,6 +784,7 @@ function bLabel(){ if (micState === "listening" && B.on) $("micLbl").textContent
 function bTick(){
   if (!B.on || micState !== "listening") return;
   const now = performance.now();
+  if (B.auto && noSpeechStop(B.heard, B.startedAt, now)){ bStop(true); setMic("idle", "Tap and spell when you're ready."); return; }
   if (now - B.startedAt > (autoStop() ? 30000 : MAX_REC)) return finishPractice();
   if (autoStop() && B.heard && now - B.lastAt > stopWait()) finishPractice();
 }
@@ -756,7 +804,10 @@ function bStop(abort){
 }
 function bFail(why){
   if (!B.on) return;
-  B.on = false; clearInterval(B.timer); clearTimeout(B.watchdog); bKill(B.rec); B.rec = null; srFailed = true;
+  B.on = false; clearInterval(B.timer); clearTimeout(B.watchdog); bKill(B.rec); B.rec = null;
+  // a mic that started by itself may just need a tap (some browsers require one): don't give up on the recognizer
+  if (B.auto && !B.wasLive){ setMic("idle", "Tap and spell when you're ready."); return; }
+  srFailed = true;
   setMic("idle", `This device's speech recognizer isn't working here (${why}). Switched to Google Cloud for now. Tap and spell again.`);
 }
 async function finishBrowser(){
@@ -776,6 +827,7 @@ async function finishBrowser(){
 
 /* ---- bee simulation: word, letters, word; start-over follows the Scripps rule ---- */
 function beeTick(now){
+  if (R.auto && noSpeechStop(R.heard, R.startedAt, now)){ recStop(); setMic("idle", "Tap and spell when you're ready."); return; }
   if (now - R.startedAt > MAX_REC) return finishBee();
   // auto-stop on: after a pause, check whether the word was said again (lock-in); a bit sooner than Practice,
   // since it only finishes once the word itself is heard at the end
@@ -859,10 +911,23 @@ function showResult(ok, heard, mode, note, extra = {}){
   if ($("hearTrick")) $("hearTrick").onclick = () => say(cw.trick.replace(/\b([A-Z]{2,})\b/g, m => m.split("").join(" ")));
   $("nextBtn").textContent = (round.mode === "bee" && !ok) ? "See results" : "Next word";
   renderDots();
-  if (ok) say(v.textContent);
+  cancelAutoNext();
+  if (ok){ const said = say(v.textContent); if (autoNextOn()) scheduleAutoNext(at.id, said); }
   else if (pending) sayLetters(`Let's check that one later. The word ${w} is spelled`, w);
   else sayLetters(`The word ${w} is spelled`, w);
 }
+/* hands-free: after "Correct!" finishes, wait the chosen pause, then read the next word (misses always wait for a tap) */
+let autoNextTimer = null;
+function cancelAutoNext(){ clearTimeout(autoNextTimer); autoNextTimer = null; $("autoNextBar").hidden = true; }
+async function scheduleAutoNext(attemptId, said){
+  await said;
+  const still = () => round && round.attemptId === attemptId && !$("resultArea").hidden && round.results.length && round.results[round.results.length-1].ok;
+  if (!still()) return;
+  $("autoNextMsg").textContent = `Next word in ${Math.round(nextWait()/1000)} second${nextWait() === 1000 ? "" : "s"}…`;
+  $("autoNextBar").hidden = false;
+  autoNextTimer = setTimeout(() => { $("autoNextBar").hidden = true; autoNextTimer = null; if (still()) $("nextBtn").click(); }, nextWait());
+}
+$("stayBtn").onclick = () => cancelAutoNext();
 function pendingNote(diffs){
   const U = c => c.toUpperCase();
   if (!diffs.length) return "The speech recognizer wasn't sure about some letters (one of its guesses spells the word), so this one waits for a grown-up to check. It doesn't count for or against you, and it will come back later.";
@@ -912,13 +977,15 @@ function openPatterns(){
   for (const b of $("patList").querySelectorAll("button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
   show("patterns");
 }
-$("nextBtn").onclick = () => { if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
+$("nextBtn").onclick = () => { cancelAutoNext(); if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
 $("redoBtn").onclick = () => {            // the app misheard: void this attempt and try again
+  cancelAutoNext();
   const a = doc.attempts.find(x => x.id === round.attemptId); if (a){ a.x = 1; a.u = Date.now(); saveLocal(); markDirty(a.id); }
   round.results.pop(); if (round.reask.length && round.reask[round.reask.length-1].w === round.current.w) round.reask.pop();
   $("resultArea").hidden = true; $("spellArea").hidden = false; setMic("idle", "Okay, let's try that again."); renderDots();
 };
 function override(ok){
+  cancelAutoNext();
   const a = doc.attempts.find(x => x.id === round.attemptId); if (!a || (a.ok === ok && !a.p)) return;
   a.ok = ok; a.o = 1; delete a.p; a.u = Date.now(); saveLocal(); markDirty(a.id);
   const r = round.results[round.results.length-1]; if (r){ r.ok = ok; r.p = false; }
@@ -930,8 +997,9 @@ function override(ok){
 }
 $("markRight").onclick = () => override(true);
 $("markWrong").onclick = () => override(false);
-$("quitRound").onclick = () => { if (R.active) recStop(); if (B.on) bStop(true); finishRound(); };
+$("quitRound").onclick = () => { cancelAutoNext(); stopSpeech(); if (R.active) recStop(); if (B.on) bStop(true); finishRound(); };
 function finishRound(){
+  cancelAutoNext();
   if (R.active) recStop();
   if (B.on) bStop(true);
   $("spellArea").hidden = true; $("resultArea").hidden = true; $("asks").hidden = true; $("summaryArea").hidden = false;
@@ -1029,6 +1097,8 @@ function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
   $("setAuto").value = autoStop() ? "on" : "off"; $("setWait").value = String((doc && +doc.profile.stopWait) || 2); $("setWait").disabled = !autoStop();
+  $("setAutoListen").value = autoListenOn() ? "on" : "off"; $("setAutoNext").value = autoNextOn() ? "on" : "off";
+  $("setNextWait").value = String(nextWait() / 1000); $("setNextWait").disabled = !autoNextOn();
   $("setVoice").innerHTML = GOOGLE_VOICES.map(([v,l]) => `<option value="${v}">${l}</option>`).join("");
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
@@ -1048,11 +1118,13 @@ function learnedText(d){
 }
 $("setLetters").onclick = () => openLetters();
 $("setAuto").onchange = () => { $("setWait").disabled = $("setAuto").value === "off"; };
+$("setAutoNext").onchange = () => { $("setNextWait").disabled = $("setAutoNext").value === "off"; };
 $("setSave").onclick = () => {
   const pages = chipVals($("setPages"));
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
     len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
-    autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value, updatedAt: Date.now() });
+    autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value,
+    autoListen: $("setAutoListen").value === "on", autoNext: $("setAutoNext").value === "on", nextWait: +$("setNextWait").value, updatedAt: Date.now() });
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
