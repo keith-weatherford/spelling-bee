@@ -13,6 +13,7 @@
 :root{
   --bg:#f7f5ee; --surface:#ffffff; --ink:#1d2433; --muted:#5d6577; --line:#dedbcf;
   --honey:#c98a00; --honey-strong:#e0a100; --honey-soft:#fcf0cc; --good:#1f7a4a; --good-soft:#dcf1e4; --bad:#b3261e; --bad-soft:#f9dedb;
+  --c-actual:#a87400; --c-target:#3a6db0;   /* goal chart: validated for color-blind separation + contrast on the light surface */
   --display:"Andika","Atkinson Hyperlegible",system-ui,sans-serif;
   --body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light;
@@ -20,6 +21,7 @@
 @media (prefers-color-scheme:dark){:root{
   --bg:#14171f; --surface:#1d2230; --ink:#eceae2; --muted:#a4abba; --line:#323a4c;
   --honey:#f0b429; --honey-strong:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
+  --c-actual:#c08a0a; --c-target:#5a8ad0;   /* validated against the dark surface */
   color-scheme:dark;}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -129,6 +131,19 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   .sheet .item{break-inside:avoid}
 }
 .sr{position:absolute;left:-9999px}
+.goal{display:grid;gap:10px}
+.goal .status{font-weight:700;display:flex;gap:8px;align-items:flex-start}
+.goal .status.ok{color:var(--good)} .goal .status.no{color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.85rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:20px;height:0;border-top:2px solid}
+.burn{position:relative}
+.burn svg{display:block;width:100%;height:auto;touch-action:pan-y;overflow:visible}
+.burn svg:focus-visible{outline:3px solid var(--honey);outline-offset:4px;border-radius:6px}
+.burn .tip{position:absolute;top:0;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:.85rem;line-height:1.35;box-shadow:0 2px 10px rgba(0,0,0,.12);white-space:nowrap}
+.burn .tip b{font-size:1rem;font-variant-numeric:tabular-nums}
+.burn .tip i{display:inline-block;width:14px;height:0;border-top:2px solid;vertical-align:middle;margin-right:6px}
+#goalNote{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
 </style>
 </head>
 <body>
@@ -171,6 +186,7 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   <section class="card" id="v-home" hidden>
     <div class="row between"><h2 id="hello">Hi!</h2><span class="pill plain" id="syncState"></span></div>
     <div class="stats" id="homeStats"></div>
+    <div class="small" id="goalNote" hidden></div>
     <div class="big">
       <button class="primary" id="goPractice"><b>Practice</b><span id="practiceSub"></span></button>
       <button id="goReview"><b>Review my misses</b><span id="reviewSub"></span></button>
@@ -259,6 +275,10 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <div class="row between"><h2>Settings</h2><button class="link" id="setBack">Back</button></div>
     <label class="field">Speller's name<input id="setName" type="text" maxlength="30"></label>
     <div><b class="small">Word pages to practice</b><p class="small muted">Each page has its own grade's words plus the next grade's, like the school list.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
+    <div><b class="small">Goal: words to know by the classroom bee (Wed, Nov 11)</b>
+      <p class="small muted">Pick the grade lists this speller wants to have mastered. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
+      <div class="chips" id="setGoal" style="margin-top:6px"></div>
+      <p class="small" id="goalWarn" hidden style="margin-top:6px;color:var(--bad)"></p></div>
     <div class="row">
       <label class="field">Words per practice round<select id="setLen"><option>10</option><option>15</option><option>20</option></select></label>
       <label class="field">Reading voice<select id="setVoice"></select></label>
@@ -288,12 +308,12 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   </section>
 </main>
 
-<script src="words.js?v=1.7"></script>
-<script src="core.js?v=1.7"></script>
+<script src="words.js?v=1.8"></script>
+<script src="core.js?v=1.8"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.7";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.8";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -1055,6 +1075,7 @@ function renderHome(){
   $("checkNote").innerHTML = pend ? `${pend} word${pend===1?"":"s"} waiting for a grown-up check. <button class="link" id="goChecks">Check now</button>` : "";
   if (pend) $("goChecks").onclick = () => openStats();
   $("goLetters").textContent = doc.profile.alpha ? "Letter check" : "Letter check (1 min)";
+  goalNoteHome();
 }
 $("goPractice").onclick = () => startRound("practice");
 $("goReview").onclick = () => startRound("review");
@@ -1095,6 +1116,7 @@ $("addKid").onclick = async () => {
 /* ================= settings ================= */
 function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
+  goalChips($("setGoal"), goalGrades(doc)); goalWarnUpdate();
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
   $("setAuto").value = autoStop() ? "on" : "off"; $("setWait").value = String((doc && +doc.profile.stopWait) || 2); $("setWait").disabled = !autoStop();
   $("setAutoListen").value = autoListenOn() ? "on" : "off"; $("setAutoNext").value = autoNextOn() ? "on" : "off";
@@ -1117,10 +1139,25 @@ function learnedText(d){
   return out.join(" ");
 }
 $("setLetters").onclick = () => openLetters();
+function goalChips(el, chosen){
+  el.innerHTML = GRADES.map(g => `<label class="chip"><input type="checkbox" value="${g}" ${chosen.includes(g)?"checked":""}> Grade ${g} <span class="small muted">(${goalWordsOf([g]).length} words)</span></label>`).join("");
+}
+/* goal words that aren't on any practice page won't be asked: say which pages to turn on */
+function goalWarnText(goal, pages){
+  const inPool = new Set(); for (const p of pages) for (const x of pageWords(p)) inPool.add(x.w);
+  const missing = goal.filter(g => goalWordsOf([g]).some(x => !inPool.has(x.w)));
+  if (!missing.length) return "";
+  const pagesFor = g => [g - 1, g].filter(p => PAGES.includes(p)).map(p => "Page " + p).join(" or ");
+  return missing.map(g => `Grade ${g} words aren't on the practice pages, so they won't be asked. Turn on ${pagesFor(g)}.`).join(" ");
+}
+function goalWarnUpdate(){ const t = goalWarnText(chipVals($("setGoal")), chipVals($("setPages"))); $("goalWarn").textContent = t; $("goalWarn").hidden = !t; }
+$("setGoal").onchange = goalWarnUpdate; $("setPages").onchange = goalWarnUpdate;
 $("setAuto").onchange = () => { $("setWait").disabled = $("setAuto").value === "off"; };
 $("setAutoNext").onchange = () => { $("setNextWait").disabled = $("setAutoNext").value === "off"; };
 $("setSave").onclick = () => {
-  const pages = chipVals($("setPages"));
+  const pages = chipVals($("setPages")), goal = chipVals($("setGoal"));
+  const oldGoal = goalGrades(doc).join(",");
+  if (goal.join(",") !== oldGoal) doc.profile.goal = goal.length ? { grades: goal, setAt: Date.now() } : null;
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
     len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
     autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value,
@@ -1155,6 +1192,131 @@ $("cfgSave").onclick = async () => {
   catch(e){ $("cfgMsg").textContent = "Couldn't connect: " + e.message; }
 };
 
+/* ================= goal: on track for the bee? (burn-up chart) =================
+   The speller picks grade lists to know by the classroom bee. "Known" = mastered (3 right in a row, same as Progress).
+   Actual line: goal words mastered at the end of each day, replayed from the answer history (it can dip after a miss).
+   Target line: straight from 0 on the first day of practice to every goal word on bee day. */
+const GRADES = [...new Set(WORDS.map(x => x.g))].sort((a,b) => a - b);
+const goalWordsOf = grades => WORDS.filter(x => grades.includes(x.g));
+const goalGrades = d => ((d && d.profile && d.profile.goal && d.profile.goal.grades) || []).slice().sort((a,b) => a - b);
+const dayStart = t => { const x = new Date(t); x.setHours(0,0,0,0); return x.getTime(); };
+const nextDay = t => dayStart(t + 36 * 3600000);                      // safe across daylight-saving changes
+const dayDiff = (a, b) => Math.round((dayStart(a) - dayStart(b)) / DAY);
+const fmtDay = t => new Date(t).toLocaleDateString("en-US", { month:"short", day:"numeric" });
+function goalProgress(d){
+  const grades = goalGrades(d); if (!grades.length) return null;
+  const words = new Set(goalWordsOf(grades).map(x => x.w)), total = words.size;
+  const att = (d.attempts || []).filter(a => !a.x && !a.p && a.w).sort((a,b) => a.t - b.t);
+  const today = dayStart(Date.now()), bee = dayStart(BEE_DAY);
+  const first = att.length ? Math.min(dayStart(att[0].t), today) : today;
+  const level = new Map(); let i = 0; const series = [];
+  const masteredNow = () => { let n = 0; for (const [w, b] of level) if (b >= MASTERED && words.has(w)) n++; return n; };
+  for (let day = first; day <= today; day = nextDay(day)){
+    const end = nextDay(day);
+    for (; i < att.length && att[i].t < end; i++){ const a = att[i], b = level.get(a.w) || 0; level.set(a.w, a.ok ? Math.min(5, b + 1) : 0); }
+    series.push({ t: day, v: masteredNow() });
+  }
+  const span = Math.max(1, dayDiff(bee, first));
+  const targetAt = t => Math.max(0, Math.min(total, total * dayDiff(t, first) / span));
+  const now = series[series.length - 1].v, daysLeft = dayDiff(bee, today), remaining = total - now;
+  return { grades, total, first, bee, today, series, now, remaining, daysLeft, targetAt,
+           gap: Math.round(now - targetAt(today)), perDay: daysLeft > 0 ? Math.ceil(remaining / daysLeft) : remaining };
+}
+function goalStatus(gp){
+  const s = n => n === 1 ? "" : "s";
+  if (gp.remaining <= 0) return { ok:true, head:`Goal reached: all ${gp.total} words mastered!`, pace:"" };
+  if (gp.daysLeft < 0) return { ok: gp.remaining <= 0, head:`${gp.now} of ${gp.total} goal words mastered`, pace:"The classroom bee was Nov 11." };
+  if (gp.daysLeft === 0) return { ok: gp.gap >= 0, head:`Bee day! ${gp.now} of ${gp.total} goal words mastered.`, pace:"" };
+  const head = gp.gap >= 0 ? (gp.gap > 0 ? `On track: ${gp.gap} word${s(gp.gap)} ahead of the target` : "On track: right on the target")
+                           : `Behind by ${-gp.gap} word${s(-gp.gap)}`;
+  return { ok: gp.gap >= 0, head, pace:`To finish by Nov 11: about ${gp.perDay} more word${s(gp.perDay)} mastered a day (${gp.remaining} to go, ${gp.daysLeft} day${s(gp.daysLeft)} left). A word is mastered after 3 right in a row.` };
+}
+function goalHtml(d){
+  const gp = goalProgress(d);
+  if (!gp) return `<div class="goal"><h3>Goal for the bee</h3><p class="muted">No goal yet. ${d === doc ? 'Pick the grade lists to know by Nov 11 in <button class="link" id="goalSet">Settings</button> to see if this speller is on track.' : "Set one in this speller's Settings."}</p></div>`;
+  const st = goalStatus(gp), warn = goalWarnText(gp.grades, (d.profile && d.profile.pages) || [2]);
+  const rows = gp.series.map(p => `<tr><td>${esc(fmtDay(p.t))}</td><td>${p.v}</td><td>${Math.round(gp.targetAt(p.t))}</td></tr>`).join("");
+  return `<div class="goal"><div class="row between"><h3>Goal for the bee: grade ${esc(gp.grades.join(", "))} list${gp.grades.length > 1 ? "s" : ""}</h3><span class="pill plain">${gp.now} / ${gp.total} mastered</span></div>
+    <div class="status ${st.ok ? "ok" : "no"}"><span aria-hidden="true">${st.ok ? "✓" : "!"}</span><span>${esc(st.head)}</span></div>
+    ${st.pace ? `<p class="small muted">${esc(st.pace)}</p>` : ""}
+    ${warn ? `<p class="small" style="color:var(--bad)">${esc(warn)}</p>` : ""}
+    <div class="legend" aria-hidden="true"><span><i style="border-color:var(--c-actual)"></i>Words mastered</span><span><i style="border-color:var(--c-target);border-top-style:dashed"></i>Target pace to Nov 11</span></div>
+    <div class="burn" id="burn"></div>
+    <details><summary class="small">Show as a table</summary><div class="tablewrap"><table><thead><tr><th>Day</th><th>Mastered</th><th>Target</th></tr></thead><tbody>${rows}</tbody></table></div></details></div>`;
+}
+/* inline SVG burn-up chart sized to its container, with a crosshair readout (pointer and arrow keys) */
+function drawBurn(d){
+  const host = $("burn"); if (!host) return;
+  const gp = goalProgress(d); if (!gp) return;
+  const W = Math.max(280, Math.round(host.clientWidth || 320)), H = Math.round(Math.min(280, Math.max(190, W * 0.5)));
+  const m = { l: 34, r: 46, t: 14, b: 28 }, x0 = gp.first, x1 = Math.max(gp.bee, gp.today, gp.first + DAY);
+  const X = t => m.l + (W - m.l - m.r) * dayDiff(t, x0) / Math.max(1, dayDiff(x1, x0));
+  const Y = v => H - m.b - (H - m.t - m.b) * v / Math.max(1, gp.total);
+  const NS = "http://www.w3.org/2000/svg", el = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const txt = (x, y, str, a) => { const e = el("text", { x, y, "font-size": 12, fill:"var(--muted)", ...a }); e.textContent = str; return e; };
+  host.textContent = "";
+  const svg = el("svg", { viewBox:`0 0 ${W} ${H}`, width:W, height:H, role:"img", tabindex:0,
+    "aria-label":`Goal chart: ${gp.now} of ${gp.total} goal words mastered; target today is ${Math.round(gp.targetAt(gp.today))}.` });
+  // grid + y ticks (0, half, goal)
+  for (const v of [...new Set([0, Math.round(gp.total / 2), gp.total])]){
+    svg.append(el("line", { x1:m.l, x2:W - m.r, y1:Y(v), y2:Y(v), stroke:"var(--line)", "stroke-width":1 }));
+    svg.append(txt(m.l - 6, Y(v) + 4, String(v), { "text-anchor":"end" }));
+  }
+  // x labels: first day, today, bee day (skip any that would collide)
+  const xl = [[x0, fmtDay(x0), "start"], [gp.bee, "Nov 11", "end"]];
+  if (gp.today > x0 && gp.today < gp.bee && X(gp.today) - X(x0) > 52 && X(gp.bee) - X(gp.today) > 52) xl.push([gp.today, "Today", "middle"]);
+  for (const [t, label, anchor] of xl) svg.append(txt(X(t), H - 8, label, { "text-anchor": anchor }));
+  // target pace: dashed (it is a projection), from 0 on day one to every goal word on bee day
+  svg.append(el("line", { x1:X(x0), y1:Y(0), x2:X(gp.bee), y2:Y(gp.total), stroke:"var(--c-target)", "stroke-width":2, "stroke-dasharray":"6 5", "stroke-linecap":"round" }));
+  svg.append(txt(X(gp.bee) + 6, Y(gp.total) + 4, String(gp.total), { fill:"var(--ink)" }));
+  // actual: solid line through each day, end dot with a surface ring, value at the end
+  const pts = gp.series.map(p => `${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
+  if (gp.series.length > 1) svg.append(el("polyline", { points:pts, fill:"none", stroke:"var(--c-actual)", "stroke-width":2, "stroke-linejoin":"round", "stroke-linecap":"round" }));
+  const last = gp.series[gp.series.length - 1];
+  svg.append(el("circle", { cx:X(last.t), cy:Y(last.v), r:4.5, fill:"var(--c-actual)", stroke:"var(--surface)", "stroke-width":2 }));
+  const lx = X(last.t), ly = Y(last.v), above = ly - 10 > m.t + 8;
+  svg.append(txt(lx, above ? ly - 10 : ly + 18, String(last.v), { fill:"var(--ink)", "font-weight":700, "text-anchor":"middle" }));
+  // crosshair + readout
+  const cross = el("line", { y1:m.t, y2:H - m.b, stroke:"var(--muted)", "stroke-width":1, visibility:"hidden" });
+  svg.append(cross);
+  const hit = el("rect", { x:m.l, y:0, width:W - m.l - m.r, height:H, fill:"transparent" }); svg.append(hit);
+  host.append(svg);
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; host.append(tip);
+  const days = []; for (let t = x0; t <= gp.bee; t = nextDay(t)) days.push(t);
+  let idx = days.findIndex(t => t >= gp.today); if (idx < 0) idx = days.length - 1;
+  const show = k => {
+    idx = Math.max(0, Math.min(days.length - 1, k)); const t = days[idx], px = X(t);
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+    const p = gp.series.find(s => s.t === t);
+    tip.textContent = "";
+    const head = document.createElement("div"); head.className = "small muted"; head.textContent = t === gp.today ? "Today, " + fmtDay(t) : fmtDay(t); tip.append(head);
+    const row = (val, label, color, dash) => { const r = document.createElement("div"); const k = document.createElement("i"); k.style.borderColor = color; if (dash) k.style.borderTopStyle = "dashed";
+      const b = document.createElement("b"); b.textContent = val; r.append(k, b, document.createTextNode(" " + label)); tip.append(r); };
+    if (p) row(String(p.v), "mastered", "var(--c-actual)");
+    row(String(Math.round(gp.targetAt(t))), "target", "var(--c-target)", true);
+    tip.hidden = false;
+    const tw = tip.offsetWidth, left = Math.min(Math.max(0, px * host.clientWidth / W - tw / 2), host.clientWidth - tw);
+    tip.style.left = left + "px";
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
+  const fromPointer = e => { const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    let best = 0, bd = 1e9; days.forEach((t, k) => { const dd = Math.abs(X(t) - px); if (dd < bd){ bd = dd; best = k; } }); show(best); };
+  svg.addEventListener("pointermove", fromPointer); svg.addEventListener("pointerdown", fromPointer); svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("focus", () => show(idx)); svg.addEventListener("blur", hide);
+  svg.addEventListener("keydown", e => { if (e.key === "ArrowLeft"){ show(idx - 1); e.preventDefault(); } if (e.key === "ArrowRight"){ show(idx + 1); e.preventDefault(); } });
+}
+let burnResize = null;
+window.addEventListener("resize", () => { clearTimeout(burnResize); burnResize = setTimeout(() => { if (!$("v-stats").hidden && statsDoc) drawBurn(statsDoc); }, 150); });
+function goalNoteHome(){
+  const gp = goalProgress(doc), el = $("goalNote");
+  if (!gp){ el.hidden = true; return; }
+  const st = goalStatus(gp);
+  el.hidden = false; el.textContent = "";
+  const pill = document.createElement("span"); pill.className = "pill " + (st.ok ? "ok" : "no"); pill.textContent = (st.ok ? "✓ " : "! ") + st.head;
+  const b = document.createElement("button"); b.className = "link"; b.textContent = "See the chart"; b.onclick = () => openStats();
+  el.append(pill, document.createTextNode(` ${gp.now} of ${gp.total} goal words mastered `), b);
+}
+
 /* ================= progress (stats) ================= */
 let statsDoc = null;
 async function openStats(){
@@ -1178,7 +1340,7 @@ function renderStats(){
   let streak = 0; for (let t = new Date(); days.has(t.toDateString()); t = new Date(t - DAY)) streak++;
   const poolW = []; const seenW = new Set(); for (const p of pages) for (const x of pageWords(p)) if (!seenW.has(x.w)){ seenW.add(x.w); poolW.push(x); }
   const mastered = poolW.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
-  let html = checksHtml(d) + `<div class="stats">
+  let html = checksHtml(d) + goalHtml(d) + `<div class="stats">
     <div class="stat"><b>${mastered} / ${poolW.length}</b>words mastered</div>
     <div class="stat"><b>${wk === null ? "—" : wk + "%"}</b>right in the last 7 days</div>
     <div class="stat"><b>${st.size}</b>words practiced</div>
@@ -1213,6 +1375,7 @@ function renderStats(){
   html += `<div><h3>Kinds of mistakes</h3>` + (Object.keys(kinds).length ? `<div class="bars" style="margin-top:8px">` +
     Object.entries(kinds).sort((a,b) => b[1]-a[1]).map(([k,c]) => `<div class="bar"><span>${MISTAKE_NAMES[k]}</span><div class="track"><div class="fill" style="width:${100*c/km}%"></div></div><span>${c}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
   $("statsBody").innerHTML = html;
+  drawBurn(d); if ($("goalSet")) $("goalSet").onclick = () => openSettings();
   wireChecks(d);
   for (const b of document.querySelectorAll("#statsBody button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
 }
