@@ -275,9 +275,10 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <div class="row between"><h2>Settings</h2><button class="link" id="setBack">Back</button></div>
     <label class="field">Speller's name<input id="setName" type="text" maxlength="30"></label>
     <div><b class="small">Word pages to practice</b><p class="small muted">Each page has its own grade's words plus the next grade's, like the school list.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
-    <div><b class="small">Goal: words to know by the classroom bee (Wed, Nov 11)</b>
-      <p class="small muted">Pick the grade lists this speller wants to have mastered. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
+    <div><b class="small">Goal: words to know by the target date</b>
+      <p class="small muted">Pick the grade lists this speller wants to have mastered, and when. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
       <div class="chips" id="setGoal" style="margin-top:6px"></div>
+      <label class="field" style="margin-top:10px;max-width:16rem">Target date<input type="date" id="setGoalDate"></label>
       <p class="small" id="goalWarn" hidden style="margin-top:6px;color:var(--bad)"></p></div>
     <div class="row">
       <label class="field">Words per practice round<select id="setLen"><option>10</option><option>15</option><option>20</option></select></label>
@@ -308,12 +309,12 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   </section>
 </main>
 
-<script src="words.js?v=1.8"></script>
-<script src="core.js?v=1.8"></script>
+<script src="words.js?v=1.8.1"></script>
+<script src="core.js?v=1.8.1"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.8";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.8.1";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -1117,6 +1118,7 @@ $("addKid").onclick = async () => {
 function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
   goalChips($("setGoal"), goalGrades(doc)); goalWarnUpdate();
+  $("setGoalDate").value = isoDay(goalDate(doc));
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
   $("setAuto").value = autoStop() ? "on" : "off"; $("setWait").value = String((doc && +doc.profile.stopWait) || 2); $("setWait").disabled = !autoStop();
   $("setAutoListen").value = autoListenOn() ? "on" : "off"; $("setAutoNext").value = autoNextOn() ? "on" : "off";
@@ -1158,6 +1160,8 @@ $("setSave").onclick = () => {
   const pages = chipVals($("setPages")), goal = chipVals($("setGoal"));
   const oldGoal = goalGrades(doc).join(",");
   if (goal.join(",") !== oldGoal) doc.profile.goal = goal.length ? { grades: goal, setAt: Date.now() } : null;
+  const gd = parseDay($("setGoalDate").value);
+  if (gd) doc.profile.goalDate = isoDay(gd); else delete doc.profile.goalDate;     // cleared = back to the classroom bee
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
     len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
     autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value,
@@ -1203,11 +1207,15 @@ const dayStart = t => { const x = new Date(t); x.setHours(0,0,0,0); return x.get
 const nextDay = t => dayStart(t + 36 * 3600000);                      // safe across daylight-saving changes
 const dayDiff = (a, b) => Math.round((dayStart(a) - dayStart(b)) / DAY);
 const fmtDay = t => new Date(t).toLocaleDateString("en-US", { month:"short", day:"numeric" });
+/* the speller's target date ("YYYY-MM-DD", local); defaults to the classroom bee */
+const isoDay = t => { const x = new Date(t); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
+const parseDay = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ""); return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : null; };
+const goalDate = d => dayStart(parseDay(d && d.profile && d.profile.goalDate) || BEE_DAY);
 function goalProgress(d){
   const grades = goalGrades(d); if (!grades.length) return null;
   const words = new Set(goalWordsOf(grades).map(x => x.w)), total = words.size;
   const att = (d.attempts || []).filter(a => !a.x && !a.p && a.w).sort((a,b) => a.t - b.t);
-  const today = dayStart(Date.now()), bee = dayStart(BEE_DAY);
+  const today = dayStart(Date.now()), bee = goalDate(d);
   const first = att.length ? Math.min(dayStart(att[0].t), today) : today;
   const level = new Map(); let i = 0; const series = [];
   const masteredNow = () => { let n = 0; for (const [w, b] of level) if (b >= MASTERED && words.has(w)) n++; return n; };
@@ -1225,22 +1233,23 @@ function goalProgress(d){
 function goalStatus(gp){
   const s = n => n === 1 ? "" : "s";
   if (gp.remaining <= 0) return { ok:true, head:`Goal reached: all ${gp.total} words mastered!`, pace:"" };
-  if (gp.daysLeft < 0) return { ok: gp.remaining <= 0, head:`${gp.now} of ${gp.total} goal words mastered`, pace:"The classroom bee was Nov 11." };
-  if (gp.daysLeft === 0) return { ok: gp.gap >= 0, head:`Bee day! ${gp.now} of ${gp.total} goal words mastered.`, pace:"" };
+  const when = fmtDay(gp.bee);
+  if (gp.daysLeft < 0) return { ok: gp.remaining <= 0, head:`${gp.now} of ${gp.total} goal words mastered`, pace:`The target date was ${when}.` };
+  if (gp.daysLeft === 0) return { ok: gp.gap >= 0, head:`Target day! ${gp.now} of ${gp.total} goal words mastered.`, pace:"" };
   const head = gp.gap >= 0 ? (gp.gap > 0 ? `On track: ${gp.gap} word${s(gp.gap)} ahead of the target` : "On track: right on the target")
                            : `Behind by ${-gp.gap} word${s(-gp.gap)}`;
-  return { ok: gp.gap >= 0, head, pace:`To finish by Nov 11: about ${gp.perDay} more word${s(gp.perDay)} mastered a day (${gp.remaining} to go, ${gp.daysLeft} day${s(gp.daysLeft)} left). A word is mastered after 3 right in a row.` };
+  return { ok: gp.gap >= 0, head, pace:`To finish by ${when}: about ${gp.perDay} more word${s(gp.perDay)} mastered a day (${gp.remaining} to go, ${gp.daysLeft} day${s(gp.daysLeft)} left). A word is mastered after 3 right in a row.` };
 }
 function goalHtml(d){
   const gp = goalProgress(d);
-  if (!gp) return `<div class="goal"><h3>Goal for the bee</h3><p class="muted">No goal yet. ${d === doc ? 'Pick the grade lists to know by Nov 11 in <button class="link" id="goalSet">Settings</button> to see if this speller is on track.' : "Set one in this speller's Settings."}</p></div>`;
+  if (!gp) return `<div class="goal"><h3>Goal for the bee</h3><p class="muted">No goal yet. ${d === doc ? 'Pick the grade lists and a target date in <button class="link" id="goalSet">Settings</button> to see if this speller is on track.' : "Set one in this speller's Settings."}</p></div>`;
   const st = goalStatus(gp), warn = goalWarnText(gp.grades, (d.profile && d.profile.pages) || [2]);
   const rows = gp.series.map(p => `<tr><td>${esc(fmtDay(p.t))}</td><td>${p.v}</td><td>${Math.round(gp.targetAt(p.t))}</td></tr>`).join("");
   return `<div class="goal"><div class="row between"><h3>Goal for the bee: grade ${esc(gp.grades.join(", "))} list${gp.grades.length > 1 ? "s" : ""}</h3><span class="pill plain">${gp.now} / ${gp.total} mastered</span></div>
     <div class="status ${st.ok ? "ok" : "no"}"><span aria-hidden="true">${st.ok ? "✓" : "!"}</span><span>${esc(st.head)}</span></div>
     ${st.pace ? `<p class="small muted">${esc(st.pace)}</p>` : ""}
     ${warn ? `<p class="small" style="color:var(--bad)">${esc(warn)}</p>` : ""}
-    <div class="legend" aria-hidden="true"><span><i style="border-color:var(--c-actual)"></i>Words mastered</span><span><i style="border-color:var(--c-target);border-top-style:dashed"></i>Target pace to Nov 11</span></div>
+    <div class="legend" aria-hidden="true"><span><i style="border-color:var(--c-actual)"></i>Words mastered</span><span><i style="border-color:var(--c-target);border-top-style:dashed"></i>Target pace to ${esc(fmtDay(gp.bee))}</span></div>
     <div class="burn" id="burn"></div>
     <details><summary class="small">Show as a table</summary><div class="tablewrap"><table><thead><tr><th>Day</th><th>Mastered</th><th>Target</th></tr></thead><tbody>${rows}</tbody></table></div></details></div>`;
 }
@@ -1263,7 +1272,7 @@ function drawBurn(d){
     svg.append(txt(m.l - 6, Y(v) + 4, String(v), { "text-anchor":"end" }));
   }
   // x labels: first day, today, bee day (skip any that would collide)
-  const xl = [[x0, fmtDay(x0), "start"], [gp.bee, "Nov 11", "end"]];
+  const xl = [[x0, fmtDay(x0), "start"], [gp.bee, fmtDay(gp.bee), "end"]];
   if (gp.today > x0 && gp.today < gp.bee && X(gp.today) - X(x0) > 52 && X(gp.bee) - X(gp.today) > 52) xl.push([gp.today, "Today", "middle"]);
   for (const [t, label, anchor] of xl) svg.append(txt(X(t), H - 8, label, { "text-anchor": anchor }));
   // target pace: dashed (it is a projection), from 0 on day one to every goal word on bee day
