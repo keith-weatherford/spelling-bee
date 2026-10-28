@@ -329,9 +329,12 @@ function alphaHeard(transcript, letters){
   }
   return heard;
 }
-/* Build the map from the letter check (profile.alpha.heard) and grown-up corrections in the attempts */
+/* Build the map from the letter check (profile.alpha.heard) and grown-up corrections in the attempts.
+   From corrections, a word-for-a-letter is learned only when it was the ONLY thing that differed in the answer, and only
+   after it shows up in two different corrected answers. (v1.10: before, one correction could teach a chunk like "lee",
+   which was really L+E, as just E.) */
 function kidLetterMap(alpha, attempts){
-  const tokens = {}, clash = new Set(), pairs = new Set(), corr = {};
+  const tokens = {}, clash = new Set(), pairs = new Set(), corr = {}, seen = {};
   const addTok = (t, L) => { if (clash.has(t)) return; if (tokens[t] && tokens[t] !== L){ delete tokens[t]; clash.add(t); } else tokens[t] = L; };
   for (const [L, h] of Object.entries((alpha && alpha.heard) || {})){
     if (!h || h === L) continue;
@@ -342,15 +345,67 @@ function kidLetterMap(alpha, attempts){
     if (a.x || !a.o || !a.ok || a.m === "type" || a.e === "b" || !a.w) continue;   // (e:"b" = the device's own recognizer, which mishears differently)
     const exp = targetForms(a.w)[0]; if (!exp) continue;
     const pieces = a.r ? parseLetters(a.r, a.w, {joined:true}).pieces : String(a.h || "").split("").map(c => [c]);
-    const ops = alignPieces(pieces, exp);
-    if (ops.filter(o => o.k !== "ok").length > 3) continue;     // too different to learn from safely
-    for (const o of ops){
-      if (o.k === "token") addTok(o.piece, o.letters);
+    const ops = alignPieces(pieces, exp), off = ops.filter(o => o.k !== "ok");
+    if (!off.length || off.length > 3) continue;                    // nothing to learn, or too different to learn from safely
+    if (off.some(o => o.k === "miss" || o.k === "extra")) continue; // letters lost or added: the chunk can't be lined up with one letter
+    for (const o of off){
+      if (o.k === "token"){ const k = o.piece + ">" + o.letters; (seen[k] = seen[k] || new Set()).add(a.id || a.t); if (seen[k].size >= 2) addTok(o.piece, o.letters); }
       // a letter-for-letter mix-up counts after two corrections (one lenient "Mark right" shouldn't change scoring)
       if (o.k === "sub"){ const k = o.letters + ">" + o.piece; corr[k] = (corr[k] || 0) + 1; if (corr[k] >= 2) pairs.add(k); }
     }
   }
   return { tokens, pairs };
+}
+/* Mix-ups a grown-up has already OK'd for this speller (v1.10).
+   For every answer a grown-up decided (Mark right / Mark wrong / a "needs a check"), compare what was heard with the word.
+   If they're the same length and differ in 1-2 letters that sound alike, count each pair (unordered, "m/n") as
+   ok (grown-up said right) or bad (grown-up said wrong). Returns { "m/n": {ok, bad}, ... }. */
+const pairKey = (x, y) => [x, y].sort().join("/");
+function confirmedMixups(attempts){
+  const c = {};
+  for (const a of attempts || []){
+    if (a.x || !a.o || a.m === "type" || a.e === "b" || !a.w) continue;
+    const h = norm(String(a.h || "")).replace(/[^a-z]/g, "");
+    for (const f of targetForms(a.w)){
+      if (h.length !== f.length || h === f) continue;
+      const diffs = []; for (let i = 0; i < f.length; i++) if (h[i] !== f[i]) diffs.push([f[i], h[i]]);
+      if (diffs.length > 2 || !diffs.every(([x, y]) => soundsAlike(x, y))) continue;
+      for (const [x, y] of diffs){ const k = pairKey(x, y); c[k] = c[k] || { ok:0, bad:0 }; if (a.ok) c[k].ok++; else c[k].bad++; }
+      break;
+    }
+  }
+  return c;
+}
+const AUTO_OK_MIN = 5;
+/* Can this sound-alike miss be counted right without a grown-up? diffs = soundAlikeDiffs(...) = [{want, got, at}].
+   Every pair must have >= 5 grown-up OKs and no "it was wrong", and the swapped letter can't sit next to its partner
+   in the word (solemn, autumn, government: those are real spelling traps). */
+function autoAcceptable(diffs, target, conf){
+  if (!diffs || !diffs.length || !conf) return false;
+  const forms = targetForms(target);
+  return diffs.every(d => {
+    const k = conf[pairKey(d.want, d.got)];
+    if (!k || k.bad > 0 || k.ok < AUTO_OK_MIN) return false;
+    const f = forms.find(f => f[d.at] === d.want) || forms[0];
+    return f[d.at - 1] !== d.got && f[d.at + 1] !== d.got;
+  });
+}
+/* Goofing around instead of spelling (v1.10): filler words ("yeah yeah yeah", "blah blah"), the same non-letter word 3+
+   times, or 6+ more letters than the word has (the ABC song). Practice asks to try again instead of counting a miss. */
+const FILLERS = new Set(["yeah","yea","yay","yep","yup","nope","blah","blahblah","boom","woo","woohoo","hehe","haha","hahaha","whatever","uhhuh"]);
+function looksLikeGoofing(raw, target){
+  const f = targetForms(target)[0] || "";
+  const toks = norm(String(raw || "")).replace(/[^a-z' ]/g, " ").replace(/'/g, "").split(/\s+/).filter(Boolean);
+  const letterish = t => t.length === 1 || CLOUD_NAMES[t] || TOKEN2LETTER[t] || AMBIG[t];
+  if (toks.some(t => FILLERS.has(t) && !f.includes(t))) return true;
+  const n = {}; for (const t of toks) if (t.length >= 2 && !letterish(t) && !f.includes(t)) n[t] = (n[t] || 0) + 1;
+  if (Object.values(n).some(x => x >= 3)) return true;
+  const letters = parseLetters(raw, target, { joined:true }).letters;
+  return letters.length >= f.length + 6;
+}
+/* the same transcript with filler words taken out ("m o t h s yeah" -> "m o t h s"): if that spells the word, it counts */
+function stripFillers(raw){
+  return String(raw || "").split(/\s+/).filter(t => !FILLERS.has(norm(t).replace(/[^a-z]/g, ""))).join(" ").trim();
 }
 /* If a miss differs from the right spelling only by letters that sound alike (for everyone, or for this speller),
    return the differences [{want, got}]; otherwise null */
@@ -441,4 +496,4 @@ function ruleMistakes(heard, word){
   }
   return out;
 }
-if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike};
+if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike,confirmedMixups,autoAcceptable,looksLikeGoofing,stripFillers,pairKey,AUTO_OK_MIN};

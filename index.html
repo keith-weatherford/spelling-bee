@@ -307,6 +307,8 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
       <label class="field">Pause before the next word<select id="setNextWait"><option value="1">1 second</option><option value="2">2 seconds</option><option value="4">4 seconds</option><option value="6">6 seconds</option></select></label>
     </div>
     <p class="small muted" style="margin-top:-6px"><b>Hands-free:</b> turn on these two and “Stop listening automatically.” Misses still wait for a tap. If nobody speaks for 15 seconds, it stops listening.</p>
+    <label class="field">Mix-ups a grown-up has already OK'd<select id="setAutoOk"><option value="on">Count them right in Practice</option><option value="off">Always ask a grown-up</option></select></label>
+    <p class="small muted" style="margin-top:-6px">When the app has misheard the same pair of letters (like M as N) and a grown-up said “right” at least 5 times, and never “wrong”, Practice counts it right by itself. Not used next to the partner letter (solemn, autumn) or in Bee mode. “Mark wrong” still works.</p>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
@@ -321,12 +323,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.9"></script>
-<script src="core.js?v=1.9"></script>
+<script src="words.js?v=1.10"></script>
+<script src="core.js?v=1.10"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.9";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.10";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -709,6 +711,18 @@ const MAX_REC = 55000;                                                // Google 
 /* hands-free settings (per speller): start listening after the word is read; next word after a correct answer */
 const autoListenOn = () => !!(doc && doc.profile.autoListen);
 const autoNextOn = () => !!(doc && doc.profile.autoNext);
+const autoOkOn = () => !(doc && doc.profile.autoOk === false);      // on unless turned off
+/* a sound-alike miss: counted right by itself if a grown-up already OK'd that mix-up 5+ times, otherwise held for a check */
+function soundAlikeResult(h, diffs, extra){
+  const conf = autoOkOn() ? confirmedMixups(doc.attempts) : null;
+  if (autoAcceptable(diffs, round.current.w, conf)) return showResult(true, h, "practice", autoOkNote(diffs), { ...extra, aa: 1 });
+  return showResult(false, h, "practice", "", { ...extra, pending: diffs });
+}
+function autoOkNote(diffs){
+  const U = c => c.toUpperCase(), ps = [...new Set(diffs.map(d => `${U(d.want)} as ${U(d.got)}`))];
+  return `Counted right: the app often hears ${ps.join(" and ")} for ${doc.profile.name}, and a grown-up has OK'd that before.`;
+}
+const GOOF_MSG = "I didn't catch that. Just the letters, please. Tap and try again.";
 const nextWait = () => ((doc && +doc.profile.nextWait) || 2) * 1000;
 const NO_SPEECH_STOP = 15000;                                         // auto-started mic with nobody talking: stop, send nothing
 function canAutoListen(w){
@@ -764,10 +778,16 @@ async function finishPractice(){
     const a = scoreBee([raw], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
     if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again, a little closer and slower."); return; }
     if (a.verdict === "correct") return showResult(true, a.final, "practice", "", { raw });
+    // fooling around ("yeah yeah yeah", the ABC song) isn't a spelling: ask again instead of counting a miss
+    if (looksLikeGoofing(raw, w)){
+      const clean = stripFillers(raw);         // "m o t h s yeah": the letters were right, the "yeah" was extra
+      if (clean && clean !== raw){ const b = scoreBee([clean], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
+        if (b.verdict === "correct") return showResult(true, b.final, "practice", "", { raw }); }
+      setMic("idle", GOOF_MSG); return; }
     // a miss that differs only by letters that sound alike (T/D, M/N, or this speller's own mix-ups):
-    // hold it for a grown-up instead of marking it wrong
+    // count it right if a grown-up already OK'd that mix-up enough, otherwise hold it for a grown-up
     for (const h of [a.final, ...a.alts]){ const diffs = soundAlikeDiffs(h, w, km.pairs);
-      if (diffs) return showResult(false, h, "practice", "", { raw, pending: diffs, clip }); }
+      if (diffs) return soundAlikeResult(h, diffs, { raw, clip }); }
     showResult(false, a.final, "practice", "", { raw });
   }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again, or type it."); }
 }
@@ -853,8 +873,11 @@ async function finishBrowser(){
   // another of the recognizer's guesses spells the word: it wasn't sure, so a grown-up decides
   if (v === "unsure" || anyAltCorrect(segs, w)) return showResult(false, p.letters, "practice", "", { ...extra, pending: [] });
   if (v === "unclear"){ setMic("idle", `I heard “${top.slice(0, 40)}” but couldn't pick out every letter. Tap and try again, with a short pause between letters.`); return; }
+  if (looksLikeGoofing(top, w)){ const clean = stripFillers(top);
+    if (clean && clean !== top && verdictFor(parseLetters(clean, w, { map: km.tokens }), w, segs.length) === "correct") return showResult(true, parseLetters(clean, w, { map: km.tokens }).letters, "practice", "", extra);
+    setMic("idle", GOOF_MSG); return; }
   for (const h of [p.letters, ...p.alts.slice(0, 60)]){ const diffs = soundAlikeDiffs(h, w, km.pairs);
-    if (diffs) return showResult(false, h, "practice", "", { ...extra, pending: diffs }); }
+    if (diffs) return soundAlikeResult(h, diffs, extra); }
   showResult(false, p.letters, "practice", "", extra);
 }
 
@@ -916,6 +939,7 @@ function showResult(ok, heard, mode, note, extra = {}){
   if (round.rule) at.ru = round.rule;
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
+  if (extra.aa) at.aa = 1;                                         // counted right by a mix-up a grown-up already OK'd
   if (extra.eng === "browser") at.e = "b";
   doc.attempts.push(at); saveLocal(); markDirty(at.id);
   if (pending && extra.clip) saveClip(at.id, extra.clip);
@@ -925,7 +949,7 @@ function showResult(ok, heard, mode, note, extra = {}){
   const v = $("verdict"); v.className = "verdict " + (ok ? "ok celebrate" : pending ? "wait" : "no");
   v.textContent = ok ? ["Correct!","You got it!","Nice spelling!","Perfect!"][Math.floor(Math.random()*4)] : pending ? "Let's check that one later." : "Not quite.";
   const tiles = $("tiles"); tiles.innerHTML = "";
-  for (const o of align(heard, w)){ const t = document.createElement("span"); t.className = "tile " + (pending && o.t === "x" ? "q" : o.t); t.textContent = o.ch;
+  for (const o of align(extra.aa ? targetForms(w)[0] : heard, w)){ const t = document.createElement("span"); t.className = "tile " + (pending && o.t === "x" ? "q" : o.t); t.textContent = o.ch;
     if (o.t === "x" || o.t === "gap") t.title = "Should be: " + (o.want || "(nothing)"); tiles.append(t); }
   const forms = targetForms(w);
   // underline the letters of the right spelling that were missed or wrong (lined up the same way as the tiles)
@@ -1080,7 +1104,7 @@ function renderHome(){
   const misses = reviewList().length;
   const today = doc.attempts.filter(a => !a.x && a.t >= new Date().setHours(0,0,0,0)).length;
   $("homeStats").innerHTML = [
-    [mastered + " / " + p.length, "words mastered"], [seen, "words practiced"], [today, "spelled today"], [doc.profile.bestBee || 0, "best bee streak"]
+    [mastered + " / " + p.length, "mastered on your pages"], [seen, "words practiced"], [today, "spelled today"], [doc.profile.bestBee || 0, "best bee streak"]
   ].map(([b, s]) => `<div class="stat"><b>${b}</b>${s}</div>`).join("");
   $("practiceSub").textContent = due ? `${due} word${due===1?"":"s"} ready to review, plus new ones` : "New words from your pages";
   $("reviewSub").textContent = misses ? `${misses} word${misses===1?"":"s"} to fix` : "Nothing missed yet";
@@ -1140,17 +1164,24 @@ function openSettings(){
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
   $("setEngine").value = cfg.engine === "browser" ? "browser" : "google"; engineNote();
-  $("setLearned").textContent = learnedText(doc);
+  $("setLearned").textContent = learnedText(doc); $("setAutoOk").value = autoOkOn() ? "on" : "off";
   show("settings");
 }
 function learnedText(d){
   const km = kidMap(d), al = d.profile.alpha, U = c => c.toUpperCase(), out = [];
   out.push(al ? `Letter check done ${new Date(al.at).toLocaleDateString()}.` : "No letter check yet.");
   const toks = Object.entries(km.tokens).map(([t, L]) => `“${t}” as ${U(L)}`);
-  const prs = [...km.pairs].map(k => `${U(k[0])} heard as ${U(k[2])}`);
+  const prs = [...km.pairs].filter(k => !soundsAlike(k[0], k[2])).map(k => `${U(k[0])} heard as ${U(k[2])}`);   // sound-alikes are listed below
   if (toks.length) out.push("Reads " + toks.join(", ") + ".");
   if (prs.length) out.push("Holds these mix-ups for a grown-up: " + prs.join(", ") + ".");
-  out.push("Letters that sound alike for everyone (like T and D, M and N) are always held for a check in Practice.");
+  const conf = confirmedMixups(d.attempts), U2 = k => k.split("/").map(U).join(" and ");
+  const okd = Object.entries(conf).filter(([, c]) => c.bad === 0 && c.ok >= AUTO_OK_MIN).map(([k, c]) => `${U2(k)} (${c.ok} OKs)`);
+  const soon = Object.entries(conf).filter(([, c]) => c.bad === 0 && c.ok < AUTO_OK_MIN).map(([k, c]) => `${U2(k)} (${c.ok} of ${AUTO_OK_MIN})`);
+  const no = Object.entries(conf).filter(([, c]) => c.bad > 0).map(([k]) => U2(k));
+  out.push("Letters that sound alike for everyone (like T and D, M and N) are held for a grown-up in Practice.");
+  if (okd.length) out.push((d.profile.autoOk === false ? "OK'd enough to count right (turned off): " : "Counted right without asking: ") + okd.join(", ") + ".");
+  if (soon.length) out.push("Getting there: " + soon.join(", ") + ".");
+  if (no.length) out.push("Always asks (a grown-up said “wrong” at least once): " + no.join(", ") + ".");
   return out.join(" ");
 }
 $("setLetters").onclick = () => openLetters();
@@ -1178,7 +1209,8 @@ $("setSave").onclick = () => {
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
     len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
     autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value,
-    autoListen: $("setAutoListen").value === "on", autoNext: $("setAutoNext").value === "on", nextWait: +$("setNextWait").value, updatedAt: Date.now() });
+    autoListen: $("setAutoListen").value === "on", autoNext: $("setAutoNext").value === "on", nextWait: +$("setNextWait").value,
+    autoOk: $("setAutoOk").value === "on", updatedAt: Date.now() });
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
@@ -1360,11 +1392,13 @@ function renderStats(){
   const pages = (d.profile && d.profile.pages) || [2];
   const week = att.filter(a => a.t >= now - 7*DAY), wk = week.length ? Math.round(100 * week.filter(a => a.ok).length / week.length) : null;
   const days = new Set(att.map(a => new Date(a.t).toDateString()));
-  let streak = 0; for (let t = new Date(); days.has(t.toDateString()); t = new Date(t - DAY)) streak++;
+  // a streak still counts through yesterday until today is over
+  let streak = 0, t0 = new Date(); if (!days.has(t0.toDateString())) t0 = new Date(dayStart(Date.now()) - DAY / 2);
+  for (let t = t0; days.has(t.toDateString()); t = new Date(dayStart(t.getTime()) - DAY / 2)) streak++;
   const poolW = []; const seenW = new Set(); for (const p of pages) for (const x of pageWords(p)) if (!seenW.has(x.w)){ seenW.add(x.w); poolW.push(x); }
   const mastered = poolW.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
   let html = checksHtml(d) + goalHtml(d) + `<div class="stats">
-    <div class="stat"><b>${mastered} / ${poolW.length}</b>words mastered</div>
+    <div class="stat"><b>${mastered} / ${poolW.length}</b>mastered on practice pages</div>
     <div class="stat"><b>${wk === null ? "—" : wk + "%"}</b>right in the last 7 days</div>
     <div class="stat"><b>${st.size}</b>words practiced</div>
     <div class="stat"><b>${streak}</b>day streak</div>
@@ -1433,6 +1467,7 @@ function attemptNote(a){
   if (a.x) n.push("thrown out (“That's not what I said”), not counted");
   if (a.p) n.push("waiting for a grown-up check, not counted yet");
   if (a.o) n.push(a.ok ? "marked right by a grown-up" : "marked wrong by a grown-up");
+  else if (a.aa) n.push("counted right: a mix-up a grown-up already OK'd");
   if (a.m === "type") n.push("typed");
   if (a.e === "b") n.push("device recognizer");
   return n.join(" · ");
