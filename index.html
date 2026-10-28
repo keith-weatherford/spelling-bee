@@ -127,10 +127,21 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
 .sheet .lines i{flex:1;min-width:120px;border-bottom:1.5px solid var(--muted);height:28px;display:block}
 @media print{
   body{background:#fff;color:#000;padding:0} .top,#v-home,#v-play,#v-settings,#v-kids,#v-setup,#v-letters,.noprint{display:none!important}
+  dialog#wordHist{display:none!important}
   #v-stats{border:none;padding:0} #v-stats > *:not(#statsBody){display:none!important} #statsBody > *:not(.sheetwrap){display:none!important}
   .sheet .item{break-inside:avoid}
 }
 .sr{position:absolute;left:-9999px}
+.hist{display:grid;gap:8px}
+.hist details.day{border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.hist summary{cursor:pointer;min-height:40px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.hist .dayBody{display:grid;gap:12px;margin-top:8px}
+.hist .round{display:grid;gap:4px}
+tr.void td{opacity:.55} tr.void td:nth-child(2) button, tr.void td:nth-child(3){text-decoration:line-through}
+.wordlink{padding:0;min-height:auto;font-weight:700;color:var(--ink);text-align:left}
+dialog#wordHist{border:1px solid var(--line);border-radius:16px;padding:18px;max-width:min(680px,calc(100vw - 32px));width:100%;background:var(--surface);color:var(--ink)}
+dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
+#wordHistBody{display:grid;gap:10px}
 .goal{display:grid;gap:10px}
 .goal .status{font-weight:700;display:flex;gap:8px;align-items:flex-start}
 .goal .status.ok{color:var(--good)} .goal .status.no{color:var(--bad)}
@@ -308,13 +319,14 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
     <div class="row"><button id="setDevSave">Save device settings</button><span class="status" id="setMsg"></span></div>
   </section>
 </main>
+<dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.8.1"></script>
-<script src="core.js?v=1.8.1"></script>
+<script src="words.js?v=1.9"></script>
+<script src="core.js?v=1.9"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.8.1";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.9";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -627,7 +639,7 @@ function reviewList(){
     .sort((a,b) => st.get(b.w).miss - st.get(a.w).miss).slice(0, 15);
 }
 function startRound(mode, ruleId){
-  round = { mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null, rule: ruleId || null };
+  round = { id: uid(), mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null, rule: ruleId || null };
   if (mode === "review"){ round.list = reviewList(); round.len = round.list.length; }
   if (mode === "pattern"){ round.list = patternList(ruleId); round.len = round.list.length;
     if (!round.list.length){ alertHome("No words with that pattern on your pages."); return; } }
@@ -900,7 +912,8 @@ $("typeBox").onsubmit = e => { e.preventDefault(); const t = clean($("typeIn").v
 function showResult(ok, heard, mode, note, extra = {}){
   const w = round.current.w;
   const pending = !ok && extra.pending ? extra.pending : null;     // "needs a check": sound-alike letters only
-  const at = { id: uid(), t: Date.now(), u: Date.now(), w, ok, h: heard, m: mode };
+  const at = { id: uid(), t: Date.now(), u: Date.now(), w, ok, h: heard, m: mode, rd: round.id, rm: round.mode };
+  if (round.rule) at.ru = round.rule;
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
   if (extra.eng === "browser") at.e = "b";
@@ -1329,12 +1342,13 @@ function goalNoteHome(){
 /* ================= progress (stats) ================= */
 let statsDoc = null;
 async function openStats(){
-  show("stats");
+  show("stats"); openDays.clear();
   const sel = $("statsKid"); sel.innerHTML = `<option value="${esc(doc.profile.id)}">${esc(doc.profile.name)}</option>`;
   try{ const kids = (await api("/kids")).kids || []; for (const k of kids) if (k.id !== doc.profile.id) sel.insertAdjacentHTML("beforeend", `<option value="${esc(k.id)}">${esc(k.name)}</option>`); }catch(e){}
   sel.value = doc.profile.id; statsDoc = doc; renderStats();
 }
 $("statsKid").onchange = async () => {
+  openDays.clear();
   const id = $("statsKid").value;
   if (id === doc.profile.id) statsDoc = doc;
   else { $("statsBody").innerHTML = '<p class="muted">Loading…</p>'; try{ statsDoc = await api("/sync?kid=" + encodeURIComponent(id)); }catch(e){ $("statsBody").innerHTML = `<p class="muted">Couldn't load: ${esc(e.message)}</p>`; return; } }
@@ -1374,7 +1388,7 @@ function renderStats(){
         ${e.def ? `<div class="small">${esc(e.def)}</div>` : ""}${e.trick ? `<div class="small"><b>Trick:</b> ${esc(e.trick)}</div>` : ""}
         <div class="lines"><i></i><i></i><i></i></div></div>`; }).join("") + `</div></div>`;
   html += `<div><h3>Trouble words</h3>` + (trouble.length ? `<div class="tablewrap"><table><thead><tr><th>Word</th><th>Right</th><th>Missed</th><th>Last wrong spelling</th><th>Now</th></tr></thead><tbody>` +
-    trouble.map(([w,s]) => `<tr><td><b>${esc(w)}</b></td><td>${s.ok}</td><td>${s.miss}</td><td>${esc(s.wrong[s.wrong.length-1]||"")}</td><td>${s.box >= MASTERED ? "mastered" : s.streak ? s.streak + " right in a row" : "keep practicing"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="muted">No misses yet.</p>`) + `</div>`;
+    trouble.map(([w,s]) => `<tr><td><button class="link wordlink" data-word="${esc(w)}">${esc(w)}</button></td><td>${s.ok}</td><td>${s.miss}</td><td>${esc(s.wrong[s.wrong.length-1]||"")}</td><td>${s.box >= MASTERED ? "mastered" : s.streak ? s.streak + " right in a row" : "keep practicing"}</td></tr>`).join("") + `</tbody></table></div>` : `<p class="muted">No misses yet.</p>`) + `</div>`;
   // mistake types
   const kinds = {}; for (const a of att) if (!a.ok) for (const k of mistakeKinds(a.h, a.w)) kinds[k] = (kinds[k]||0) + 1;
   const km = Math.max(1, ...Object.values(kinds));
@@ -1383,10 +1397,98 @@ function renderStats(){
     tp.slice(0, 6).map(t => `<div class="bar wide"><span>${esc(t.name)}</span><div class="track"><div class="fill" style="width:${100*t.n/tpm}%"></div></div><span>${t.n}${d === doc ? ` <button class="link noprint" data-rule="${t.id}">Practice</button>` : ""}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
   html += `<div><h3>Kinds of mistakes</h3>` + (Object.keys(kinds).length ? `<div class="bars" style="margin-top:8px">` +
     Object.entries(kinds).sort((a,b) => b[1]-a[1]).map(([k,c]) => `<div class="bar"><span>${MISTAKE_NAMES[k]}</span><div class="track"><div class="fill" style="width:${100*c/km}%"></div></div><span>${c}</span></div>`).join("") + `</div>` : `<p class="muted">None yet.</p>`) + `</div>`;
+  html += historyHtml(d);
   $("statsBody").innerHTML = html;
+  wireHistory(d);
   drawBurn(d); if ($("goalSet")) $("goalSet").onclick = () => openSettings();
   wireChecks(d);
   for (const b of document.querySelectorAll("#statsBody button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
+}
+
+/* ================= history: every answer, by day and round =================
+   New answers carry a round id (rd) and round type (rm); older answers are grouped into rounds by gaps
+   of more than 10 minutes or a switch between Bee mode and practice. */
+const ROUND_GAP = 10 * 60000;
+const openDays = new Set();                     // days opened in History stay open when Progress re-renders
+const fmtTime = t => new Date(t).toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+const fmtDate = t => new Date(t).toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+function roundLabel(r){
+  const a = r[0];
+  if (a.rm === "pattern"){ const rule = RULES.find(x => x.id === a.ru); return "Pattern" + (rule ? ": " + rule.name : ""); }
+  return ({ practice:"Practice", review:"Review my misses", bee:"Bee simulation" })[a.rm] || (a.m === "bee" ? "Bee simulation" : "Practice or review");
+}
+function roundsOf(attempts){
+  const list = attempts.filter(a => a.w).slice().sort((a,b) => a.t - b.t), rounds = [];
+  let cur = null;
+  for (const a of list){
+    const prev = cur && cur[cur.length - 1];
+    const same = prev && (a.rd || prev.rd ? a.rd === prev.rd : (a.t - prev.t < ROUND_GAP && (a.m === "bee") === (prev.m === "bee")));
+    if (!same){ cur = []; rounds.push(cur); }
+    cur.push(a);
+  }
+  return rounds;
+}
+function attemptNote(a){
+  const n = [];
+  if (a.x) n.push("thrown out (“That's not what I said”), not counted");
+  if (a.p) n.push("waiting for a grown-up check, not counted yet");
+  if (a.o) n.push(a.ok ? "marked right by a grown-up" : "marked wrong by a grown-up");
+  if (a.m === "type") n.push("typed");
+  if (a.e === "b") n.push("device recognizer");
+  return n.join(" · ");
+}
+const resultMark = a => a.x ? "—" : a.p ? "?" : a.ok ? "✓" : "✗";
+const resultClass = a => a.x || a.p ? "plain" : a.ok ? "ok" : "no";
+function historyHtml(d){
+  const rounds = roundsOf(d.attempts || []);
+  if (!rounds.length) return `<div class="hist"><h3>History</h3><p class="muted">No answers yet.</p></div>`;
+  const days = new Map();
+  for (const r of rounds){ const k = dayStart(r[0].t); if (!days.has(k)) days.set(k, []); days.get(k).push(r); }
+  const keys = [...days.keys()].sort((a,b) => b - a);
+  return `<div class="hist"><h3>History</h3><p class="small muted">Every answer, newest day first. Tap a word to see all of its tries and why it is or isn't mastered.</p>` +
+    keys.map((k, i) => { const rs = days.get(k), all = rs.flat(), counted = all.filter(a => !a.x && !a.p);
+      return `<details class="day" data-day="${k}"${(openDays.size ? openDays.has(k) : i === 0) ? " open" : ""}><summary><b>${esc(fmtDate(k))}</b> <span class="small muted">${rs.length} round${rs.length===1?"":"s"} · ${counted.filter(a => a.ok).length} of ${counted.length} right</span></summary><div class="dayBody"></div></details>`; }).join("") + `</div>`;
+}
+function dayBodyHtml(d, day){
+  const rounds = roundsOf(d.attempts || []).filter(r => dayStart(r[0].t) === day).reverse();
+  return rounds.map(r => { const counted = r.filter(a => !a.x && !a.p);
+    return `<div class="round"><div class="row between"><b>${esc(roundLabel(r))}</b><span class="small muted">${esc(fmtTime(r[0].t))} · ${counted.filter(a => a.ok).length} of ${counted.length} right</span></div>
+      <div class="tablewrap"><table><thead><tr><th></th><th>Word</th><th>Spelled</th><th>Notes</th></tr></thead><tbody>` +
+      r.map(a => `<tr class="${a.x ? "void" : ""}"><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td><button class="link wordlink" data-word="${esc(a.w)}">${esc(a.w)}</button></td><td>${esc(a.h || "")}</td><td class="small muted">${esc(attemptNote(a))}</td></tr>`).join("") +
+      `</tbody></table></div></div>`; }).join("");
+}
+function wireHistory(d){
+  const fill = det => { const b = det.querySelector(".dayBody"); if (!b.dataset.done){ b.innerHTML = dayBodyHtml(d, +det.dataset.day); b.dataset.done = 1; } };
+  for (const det of document.querySelectorAll("#statsBody details.day")){
+    if (det.open) fill(det);
+    if (det.open) openDays.add(+det.dataset.day);
+    det.addEventListener("toggle", () => { if (det.open){ openDays.add(+det.dataset.day); fill(det); } else openDays.delete(+det.dataset.day); });
+  }
+}
+// one listener for the whole Progress page (the page is re-rendered often): tap a word to see its history
+$("statsBody").addEventListener("click", e => { const b = e.target.closest(".wordlink"); if (b && statsDoc) openWordHistory(statsDoc, b.dataset.word); });
+/* one word: every try in order, with the running "right in a row" count that decides mastery */
+function openWordHistory(d, w){
+  const all = (d.attempts || []).filter(a => a.w === w).sort((a,b) => a.t - b.t);
+  let level = 0, streak = 0;
+  const rows = all.map(a => {
+    let effect;
+    if (a.x) effect = "not counted";
+    else if (a.p) effect = "not counted yet";
+    else if (a.ok){ level = Math.min(5, level + 1); streak++; effect = `${streak} right in a row` + (level >= MASTERED && streak === MASTERED ? " → mastered" : ""); }
+    else { level = 0; streak = 0; effect = "back to 0"; }
+    return `<tr class="${a.x ? "void" : ""}"><td class="small">${esc(fmtDate(a.t))}<br><span class="muted">${esc(fmtTime(a.t))}</span></td><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td>${esc(a.h || "")}</td><td class="small">${esc(effect)}${attemptNote(a) ? `<br><span class="muted">${esc(attemptNote(a))}</span>` : ""}</td></tr>`; });
+  const s = stats(d).get(w);
+  const status = !s ? "Not answered yet." : s.box >= MASTERED ? `Mastered: ${s.streak} right in a row.`
+    : s.streak ? `${s.streak} right in a row. Needs ${MASTERED - s.streak} more in a row to be mastered.` : "The last counted answer was wrong, so it starts over: 3 right in a row to master it.";
+  const e = WORD_BY.get(w);
+  $("wordHistBody").innerHTML = `<div class="row between"><h2 style="font:700 1.6rem var(--display)">${esc(w)}</h2><button class="link" id="wordHistClose">Close</button></div>
+    ${e && e.syl ? `<p class="muted">${esc(e.syl)}${e.pos ? " · " + esc(e.pos) : ""}</p>` : ""}
+    <p><b>${esc(status)}</b></p>
+    ${s ? `<p class="small muted">${s.ok} right · ${s.miss} wrong (counted answers)</p>` : ""}
+    <div class="tablewrap"><table><thead><tr><th>When</th><th></th><th>Spelled</th><th>Effect</th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="4" class="muted">No tries yet.</td></tr>'}</tbody></table></div>`;
+  $("wordHistClose").onclick = () => $("wordHist").close();
+  if (!$("wordHist").open) $("wordHist").showModal();
 }
 /* "Needs a check": misses that differed only by sound-alike letters. A grown-up listens (if the recording is on
    this device) and decides; "Right" also teaches the app this speller's mix-up. */
