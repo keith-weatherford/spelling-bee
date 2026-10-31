@@ -309,6 +309,11 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
     <p class="small muted" style="margin-top:-6px"><b>Hands-free:</b> turn on these two and “Stop listening automatically.” Misses still wait for a tap. If nobody speaks for 15 seconds, it stops listening.</p>
     <label class="field">Mix-ups a grown-up has already OK'd<select id="setAutoOk"><option value="on">Count them right in Practice</option><option value="off">Always ask a grown-up</option></select></label>
     <p class="small muted" style="margin-top:-6px">When the app has misheard the same pair of letters (like M as N) and a grown-up said “right” at least 5 times, and never “wrong”, Practice counts it right by itself. Not used next to the partner letter (solemn, autumn) or in Bee mode. “Mark wrong” still works.</p>
+    <div class="row">
+      <label class="field">Saying “dash” and “space” in Practice<select id="setMarkPractice"><option value="remind">Remind only</option><option value="required">Required</option></select></label>
+      <label class="field">Saying “dash” and “space” in Bee mode<select id="setMarkBee"><option value="required">Required</option><option value="off">Not required</option></select></label>
+    </div>
+    <p class="small muted" style="margin-top:-6px">For words like fiddle-faddle and pad thai. “Dash” or “hyphen” both work. Required: leaving it out or putting it in the wrong place is a miss. Otherwise it counts right with a reminder. Typed answers follow the Practice setting.</p>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
@@ -323,12 +328,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.10"></script>
-<script src="core.js?v=1.10"></script>
+<script src="words.js?v=1.11"></script>
+<script src="core.js?v=1.11"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.10";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.11";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -368,7 +373,7 @@ function stats(d){                                 // per-word history, replayed
     const s = m.get(a.w) || { n:0, ok:0, miss:0, box:0, last:0, streak:0, wrong:[] };
     s.n++; s.last = a.t;
     if (a.ok){ s.ok++; s.streak++; s.box = Math.min(5, s.box + 1); }
-    else { s.miss++; s.streak = 0; s.box = 0; if (a.h) s.wrong.push(a.h); }
+    else { s.miss++; s.streak = 0; s.box = 0; if (a.h) s.wrong.push(a.hm || a.h); }
     m.set(a.w, s);
   }
   return m;
@@ -525,9 +530,10 @@ async function speak(text, ssml, plainFallback){
 const say = text => speak(text, false);
 const xml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
 function lettersSsml(prefix, w){
-  const letters = targetForms(w)[0].split("");
-  return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`,
-           plain: prefix + " " + letters.join(", ") + "." };
+  const letters = withMarks(targetForms(w)[0], targetMarks(w)).split("");     // "fiddle-faddle": the dash is read as "dash"
+  const say = ch => ch === "-" ? "dash" : ch === " " ? "space" : null;
+  return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => say(ch) || `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`,
+           plain: prefix + " " + letters.map(ch => say(ch) || ch).join(", ") + "." };
 }
 function sayLetters(prefix, w){ const x = lettersSsml(prefix, w); return speak(x.ssml, true, x.plain); }
 /* fetch a clip ahead of time so it plays without a pause (it's saved on the device like any other clip) */
@@ -536,7 +542,7 @@ function prefetch(text, ssml){
   if (voiceName === "device" || !cfg || ttsFailures >= 3) return;
   ttsBlob(text, ssml, voiceName, rate).catch(() => {});
 }
-const spellOut = w => targetForms(w)[0].split("").join(", ");
+const spellOut = w => withMarks(targetForms(w)[0], targetMarks(w)).split("").map(ch => ch === "-" ? "dash" : ch === " " ? "space" : ch).join(", ");
 /* "say it slowly": each syllable with a pause, so the word can be heard in chunks */
 function sayChunks(entry){
   const parts = String(entry.syl || entry.w).split("·");
@@ -723,6 +729,16 @@ function autoOkNote(diffs){
   return `Counted right: the app often hears ${ps.join(" and ")} for ${doc.profile.name}, and a grown-up has OK'd that before.`;
 }
 const GOOF_MSG = "I didn't catch that. Just the letters, please. Tap and try again.";
+/* words with a dash or space (v1.11): is saying "dash"/"space" required? Practice: off unless set; Bee: on unless set off */
+const markRequired = mode => mode === "bee" ? !(doc && doc.profile.markBee === "off") : !!(doc && doc.profile.markPractice === "required");
+/* the letters were right: check the dash/space too (mk = markCheck(...), null for ordinary words) */
+function rightLetters(letters, mk, mode, note, extra){
+  const n = s => [note, s].filter(Boolean).join(" ");
+  if (!mk) return showResult(true, letters, mode, note || "", extra);
+  const x = { ...extra, hm: mk.heard, marks: mk };
+  if (mk.ok) return showResult(true, letters, mode, note || "", x);
+  return showResult(!markRequired(mode === "bee" ? "bee" : "practice"), letters, mode, n(mk.note), x);
+}
 const nextWait = () => ((doc && +doc.profile.nextWait) || 2) * 1000;
 const NO_SPEECH_STOP = 15000;                                         // auto-started mic with nobody talking: stop, send nothing
 function canAutoListen(w){
@@ -777,12 +793,12 @@ async function finishPractice(){
     const km = kidMap(), raw = textOf(d);
     const a = scoreBee([raw], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
     if (!a.final){ setMic("idle", "I couldn't catch the letters. Tap and try again, a little closer and slower."); return; }
-    if (a.verdict === "correct") return showResult(true, a.final, "practice", "", { raw });
+    if (a.verdict === "correct") return rightLetters(a.final, a.marks, "practice", "", { raw });
     // fooling around ("yeah yeah yeah", the ABC song) isn't a spelling: ask again instead of counting a miss
     if (looksLikeGoofing(raw, w)){
       const clean = stripFillers(raw);         // "m o t h s yeah": the letters were right, the "yeah" was extra
       if (clean && clean !== raw){ const b = scoreBee([clean], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
-        if (b.verdict === "correct") return showResult(true, b.final, "practice", "", { raw }); }
+        if (b.verdict === "correct") return rightLetters(b.final, b.marks, "practice", "", { raw }); }
       setMic("idle", GOOF_MSG); return; }
     // a miss that differs only by letters that sound alike (T/D, M/N, or this speller's own mix-ups):
     // count it right if a grown-up already OK'd that mix-up enough, otherwise hold it for a grown-up
@@ -869,12 +885,14 @@ async function finishBrowser(){
   if (!top){ setMic("idle", "I didn't hear any letters. Tap and try again."); return; }
   const km = kidMap(), p = parseLetters(top, w, { map: km.tokens }), v = verdictFor(p, w, segs.length);
   const extra = { raw: top, eng: "browser" };
-  if (v === "correct") return showResult(true, p.letters, "practice", "", extra);
+  if (v === "correct"){ const L = isCorrect(p.letters, w) ? p.letters : (p.alts.find(x => isCorrect(x, w)) || p.letters);
+    return rightLetters(L, markCheck(p, w, L), "practice", "", extra); }
   // another of the recognizer's guesses spells the word: it wasn't sure, so a grown-up decides
   if (v === "unsure" || anyAltCorrect(segs, w)) return showResult(false, p.letters, "practice", "", { ...extra, pending: [] });
   if (v === "unclear"){ setMic("idle", `I heard “${top.slice(0, 40)}” but couldn't pick out every letter. Tap and try again, with a short pause between letters.`); return; }
   if (looksLikeGoofing(top, w)){ const clean = stripFillers(top);
-    if (clean && clean !== top && verdictFor(parseLetters(clean, w, { map: km.tokens }), w, segs.length) === "correct") return showResult(true, parseLetters(clean, w, { map: km.tokens }).letters, "practice", "", extra);
+    const cp = clean && clean !== top ? parseLetters(clean, w, { map: km.tokens }) : null;
+    if (cp && verdictFor(cp, w, segs.length) === "correct" && isCorrect(cp.letters, w)) return rightLetters(cp.letters, markCheck(cp, w, cp.letters), "practice", "", extra);
     setMic("idle", GOOF_MSG); return; }
   for (const h of [p.letters, ...p.alts.slice(0, 60)]){ const diffs = soundAlikeDiffs(h, w, km.pairs);
     if (diffs) return soundAlikeResult(h, diffs, extra); }
@@ -922,14 +940,20 @@ async function finishBee(){
     if (a.violation) note = `After “start over”, the letters can't change. First you said “${a.violation.before}…”, then “${a.violation.after}”.`;
     else if (!a.locked) note = "Remember to say the word again at the end to lock in your answer.";
     if (!a.opening) note += (note ? " " : "") + "Remember to say the word before you spell it.";
-    showResult(a.verdict === "correct", a.final, "bee", note, { raw: a.raw });
+    if (a.verdict === "correct") rightLetters(a.final, a.marks, "bee", note, { raw: a.raw });
+    else showResult(false, a.final, "bee", note, { raw: a.raw });
   }catch(e){ setMic("idle", "Couldn't reach the speech service (" + String(e.message||e).slice(0,80) + "). Try again."); }
 }
 
 /* ---- typing ---- */
 $("typeToggle").onclick = () => { $("typeBox").hidden = !$("typeBox").hidden; if (!$("typeBox").hidden) $("typeIn").focus(); };
-$("typeBox").onsubmit = e => { e.preventDefault(); const t = clean($("typeIn").value); if (!t) return;
-  showResult(isCorrect(t, round.current.w), t, "type"); };
+$("typeBox").onsubmit = e => { e.preventDefault(); const raw = $("typeIn").value, t = clean(raw); if (!t) return;
+  const w = round.current.w;
+  if (!isCorrect(t, w)) return showResult(false, t, "type");
+  // a typed dash or space: same check as a spoken one ("fiddle faddle" for fiddle-faddle)
+  const got = targetMarks(raw), p = { pieces: t.split("").map(c => [c]), marks: got.map(m => ({ pi: m.at, ch: m.ch })) };
+  rightLetters(t, markCheck(p, w, t), "type", "");
+};
 
 /* ---- result ---- */
 function showResult(ok, heard, mode, note, extra = {}){
@@ -940,6 +964,7 @@ function showResult(ok, heard, mode, note, extra = {}){
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
   if (extra.aa) at.aa = 1;                                         // counted right by a mix-up a grown-up already OK'd
+  if (extra.hm && extra.hm !== heard) at.hm = extra.hm;            // what was said with the dash/space ("fiddle-faddle")
   if (extra.eng === "browser") at.e = "b";
   doc.attempts.push(at); saveLocal(); markDirty(at.id);
   if (pending && extra.clip) saveClip(at.id, extra.clip);
@@ -951,9 +976,14 @@ function showResult(ok, heard, mode, note, extra = {}){
   const tiles = $("tiles"); tiles.innerHTML = "";
   for (const o of align(extra.aa ? targetForms(w)[0] : heard, w)){ const t = document.createElement("span"); t.className = "tile " + (pending && o.t === "x" ? "q" : o.t); t.textContent = o.ch;
     if (o.t === "x" || o.t === "gap") t.title = "Should be: " + (o.want || "(nothing)"); tiles.append(t); }
+  // dash/space tiles where the word has them: plain when said, red outline when missing or misplaced
+  if (extra.marks && clean(heard) === targetForms(w)[0]){ const kids = [...tiles.children];
+    for (const m of extra.marks.want.slice().sort((a,b) => b.at - a.at)){ const t = document.createElement("span"), hit = extra.marks.got.some(g => g.at === m.at && g.ch === m.ch);
+      t.className = "tile " + (hit ? "m" : "gap"); t.textContent = m.ch === "-" ? "–" : "␣"; t.title = m.ch === "-" ? "dash" : "space"; tiles.insertBefore(t, kids[m.at] || null); } }
   const forms = targetForms(w);
   // underline the letters of the right spelling that were missed or wrong (lined up the same way as the tiles)
   const marks = ok ? forms[0].split("").map(ch => esc(ch)) : align(heard, w).filter(o => o.want).map(o => o.t === "m" ? esc(o.want) : `<span class="w">${esc(o.want)}</span>`);
+  for (const m of targetMarks(w).slice().sort((a,b) => b.at - a.at)) marks.splice(m.at, 0, m.ch === "-" ? "-" : "&nbsp;");   // fiddle-faddle, pad thai
   $("answer").innerHTML = marks.join("")
     + (forms.length > 1 ? ` <span class="small muted">or ${esc(forms[1])}</span>` : "");
   $("detail").textContent = (note ? note + " " : "") + (ok ? "" : pending ? pendingNote(pending) : mistakeNote(heard, w));
@@ -1165,6 +1195,7 @@ function openSettings(){
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
   $("setEngine").value = cfg.engine === "browser" ? "browser" : "google"; engineNote();
   $("setLearned").textContent = learnedText(doc); $("setAutoOk").value = autoOkOn() ? "on" : "off";
+  $("setMarkPractice").value = markRequired("practice") ? "required" : "remind"; $("setMarkBee").value = markRequired("bee") ? "required" : "off";
   show("settings");
 }
 function learnedText(d){
@@ -1210,7 +1241,7 @@ $("setSave").onclick = () => {
     len: +$("setLen").value, rate: +$("setRate").value, voice: $("setVoice").value,
     autoStop: $("setAuto").value === "on", stopWait: +$("setWait").value,
     autoListen: $("setAutoListen").value === "on", autoNext: $("setAutoNext").value === "on", nextWait: +$("setNextWait").value,
-    autoOk: $("setAutoOk").value === "on", updatedAt: Date.now() });
+    autoOk: $("setAutoOk").value === "on", markPractice: $("setMarkPractice").value, markBee: $("setMarkBee").value, updatedAt: Date.now() });
   saveLocal(); queueSync(); show("home"); renderHome();
 };
 $("setDevSave").onclick = async () => {
@@ -1489,7 +1520,7 @@ function dayBodyHtml(d, day){
   return rounds.map(r => { const counted = r.filter(a => !a.x && !a.p);
     return `<div class="round"><div class="row between"><b>${esc(roundLabel(r))}</b><span class="small muted">${esc(fmtTime(r[0].t))} · ${counted.filter(a => a.ok).length} of ${counted.length} right</span></div>
       <div class="tablewrap"><table><thead><tr><th></th><th>Word</th><th>Spelled</th><th>Notes</th></tr></thead><tbody>` +
-      r.map(a => `<tr class="${a.x ? "void" : ""}"><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td><button class="link wordlink" data-word="${esc(a.w)}">${esc(a.w)}</button></td><td>${esc(a.h || "")}</td><td class="small muted">${esc(attemptNote(a))}</td></tr>`).join("") +
+      r.map(a => `<tr class="${a.x ? "void" : ""}"><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td><button class="link wordlink" data-word="${esc(a.w)}">${esc(a.w)}</button></td><td>${esc(a.hm || a.h || "")}</td><td class="small muted">${esc(attemptNote(a))}</td></tr>`).join("") +
       `</tbody></table></div></div>`; }).join("");
 }
 function wireHistory(d){
@@ -1512,7 +1543,7 @@ function openWordHistory(d, w){
     else if (a.p) effect = "not counted yet";
     else if (a.ok){ level = Math.min(5, level + 1); streak++; effect = `${streak} right in a row` + (level >= MASTERED && streak === MASTERED ? " → mastered" : ""); }
     else { level = 0; streak = 0; effect = "back to 0"; }
-    return `<tr class="${a.x ? "void" : ""}"><td class="small">${esc(fmtDate(a.t))}<br><span class="muted">${esc(fmtTime(a.t))}</span></td><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td>${esc(a.h || "")}</td><td class="small">${esc(effect)}${attemptNote(a) ? `<br><span class="muted">${esc(attemptNote(a))}</span>` : ""}</td></tr>`; });
+    return `<tr class="${a.x ? "void" : ""}"><td class="small">${esc(fmtDate(a.t))}<br><span class="muted">${esc(fmtTime(a.t))}</span></td><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td>${esc(a.hm || a.h || "")}</td><td class="small">${esc(effect)}${attemptNote(a) ? `<br><span class="muted">${esc(attemptNote(a))}</span>` : ""}</td></tr>`; });
   const s = stats(d).get(w);
   const status = !s ? "Not answered yet." : s.box >= MASTERED ? `Mastered: ${s.streak} right in a row.`
     : s.streak ? `${s.streak} right in a row. Needs ${MASTERED - s.streak} more in a row to be mastered.` : "The last counted answer was wrong, so it starts over: 3 right in a row to master it.";

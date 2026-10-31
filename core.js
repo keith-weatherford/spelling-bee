@@ -22,6 +22,21 @@ function norm(s){ return s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase()
 function targetForms(word){ // "swiveled / swivelled" -> both; strip hyphens/spaces/accents
   return word.split("/").map(w => norm(w).replace(/[^a-z]/g,"")).filter(Boolean);
 }
+/* Words with a dash or a space ("fiddle-faddle", "pad thai") (v1.11).
+   targetMarks: where the breaks go, counted in letters: "fiddle-faddle" -> [{at:6, ch:"-"}] */
+function targetMarks(word){
+  const w = norm(String(word).split("/")[0].trim()).replace(/[–—]/g, "-"), out = []; let n = 0;
+  for (const ch of w){ if (/[a-z]/.test(ch)) n++; else if ((ch === "-" || ch === " ") && n > 0 && !out.some(m => m.at === n)) out.push({ at:n, ch }); }
+  return out;
+}
+const hasMarks = word => targetMarks(word || "").length > 0;
+const MARK_WORDS = { dash:"-", hyphen:"-", space:" " };
+/* letters with the breaks put back in: ("fiddlefaddle", [{at:6,ch:"-"}]) -> "fiddle-faddle" */
+function withMarks(letters, marks){
+  let out = "", k = 0; const ms = (marks || []).slice().sort((a,b) => a.at - b.at);
+  for (let i = 0; i <= letters.length; i++){ while (k < ms.length && ms[k].at === i){ out += ms[k].ch; k++; } if (i < letters.length) out += letters[i]; }
+  return out;
+}
 /* Tokens the recognizer writes that could mean more than one thing. First entry is the primary reading. */
 const AMBIG = { in:["n","in"], an:["n","an"], inn:["n","in"], and:["n",""], end:["n"], um:["","m"], am:["m","am"],
                 all:["l"], ole:["l"], it:["t","it"], at:["t","at"], ok:["k","ok"], okay:["k"], is:["s","is"], es:["s"] };
@@ -31,16 +46,26 @@ function parseLetters(transcript, target, opts={}){
   const forms = targetForms(target);
   // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
   const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
-  const fixed = norm(expanded).replace(/\b(double ?u|double ?you)\b/g, " w ").replace(/\b(will you|dub ?ya)\b/g, " willyou ");
+  const MK = hasMarks(target);       // a word with a dash or space: "dash"/"hyphen"/"space" are breaks, not letters
+  let fixed = norm(expanded).replace(/\b(double ?u|double ?you)\b/g, " w ").replace(/\b(will you|dub ?ya)\b/g, " willyou ");
+  if (MK) fixed = fixed.replace(/[-–—]/g, " dash ");
   let toks = fixed.replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
+  // Google glues the break word onto the letters ("dashfaddle", "spacethai"): split it back out
+  if (MK) toks = toks.flatMap(t => t.split(/(dash|hyphen|space)/).filter(Boolean));
   // drop the word itself said before/after the letters, as in a real bee
   const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
   if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
   if (toks.length > 1 && isWord(toks[toks.length-1])) toks = toks.slice(0,-1);
+  if (MK){   // a two-word entry said before/after the letters ("pad thai, p a d space t h a i")
+    for (let k = Math.min(3, toks.length - 1); k >= 2; k--) if (isWord(toks.slice(0, k).join(""))){ toks = toks.slice(k); break; }
+    for (let k = Math.min(3, toks.length - 1); k >= 2; k--) if (isWord(toks.slice(-k).join(""))){ toks = toks.slice(0, -k); break; }
+  }
+  const marks = [];
   const pieces = []; let merged = false; const ambiguous = []; const mergedWords = [];
   for (let i=0;i<toks.length;i++){
     const t = toks[i].replace(/'s$/,"").replace(/'/g,"");
     if (!t) continue;
+    if (MK && MARK_WORDS[t]){ marks.push({ pi: pieces.length, ch: MARK_WORDS[t] }); continue; }
     if ((t==="double"||t==="dubble") && i+1<toks.length){
       const nxt = toks[i+1].replace(/'/g,"");
       if (nxt==="you"||nxt==="u"||nxt==="yu"){ pieces.push(["w"]); i++; continue; }
@@ -74,7 +99,7 @@ function parseLetters(transcript, target, opts={}){
   let combos = [""];
   for (const p of pieces){ const n=[]; for (const c of combos) for (const o of p){ if(n.length<256) n.push(c+o); } combos=n; }
   const alts = [...new Set(combos)].filter(c=>c!==letters);
-  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined, pieces};
+  return {letters, merged, alts, ambiguous, mergedWords, cloud: !!opts.joined, pieces, marks};
 }
 const NAME_SWAPS = [["you","u"],["why","y"],["are","r"],["see","c"],["bee","b"],["tee","t"],["tea","t"],["pee","p"],["jay","j"],
   ["kay","k"],["eye","i"],["oh","o"],["zee","z"],["dee","d"],["gee","g"],["vee","v"],["cue","q"],["ex","x"],["el","l"],["em","m"],["en","n"]];
@@ -248,6 +273,27 @@ function beeStructure(plainResults, target, duration){
   }
   return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
 }
+/* Did the speller say the dash/space in the right places? p = parseLetters result, letters = the spelling it was
+   scored as. Returns null for words without a break, else {ok, want, got, heard, missing, note}. */
+function markCheck(p, target, letters){
+  const want = targetMarks(target); if (!want.length || !p) return null;
+  const pieces = p.pieces || [], pm = p.marks || [];
+  // find which reading of each piece produced the spelling, so a break lands after the right number of letters
+  let lens = null;
+  const go = (i, pos, acc) => { if (lens) return; if (i === pieces.length){ if (pos === letters.length) lens = acc.slice(); return; }
+    for (const o of new Set([].concat(pieces[i]))){ if (o && letters.startsWith(o, pos)){ acc.push(o.length); go(i+1, pos+o.length, acc); acc.pop(); if (lens) return; } } };
+  if (pieces.length <= 40) go(0, 0, []);
+  if (!lens) lens = pieces.map(x => ([].concat(x)[0] || "").length);
+  const offs = [0]; for (const n of lens) offs.push(offs[offs.length-1] + n);
+  const got = []; for (const m of pm){ const at = offs[Math.min(m.pi, offs.length-1)]; if (!got.some(g => g.at === at)) got.push({ at, ch:m.ch }); }
+  const ok = want.length === got.length && want.every(w => got.some(g => g.at === w.at && g.ch === w.ch));
+  const missing = !got.length;
+  const U = s => s.toUpperCase(), said = ch => ch === "-" ? "dash" : "space";
+  const spoken = want.reduce((acc, m, k) => acc + ` ${said(m.ch)} ` + U(letters.slice(m.at, (want[k+1] || {at:letters.length}).at)), U(letters.slice(0, want[0].at)));
+  const kinds = [...new Set(want.map(m => "“" + said(m.ch) + "”"))].join(" and ");
+  const note = ok ? "" : missing ? `Remember to say ${kinds}: ${spoken}.` : `The break${want.length > 1 ? "s go" : " goes"} like this: ${spoken}.`;
+  return { ok, want, got, heard: withMarks(letters, got), missing, note };
+}
 /* score the spelling attempts (one text per window; the last one is the answer) */
 function scoreBee(attemptTexts, target, strict, st, notes, map){
   // after a start-over, the cut can catch the tail of "start over"; no bee word on the list starts with these
@@ -268,7 +314,15 @@ function scoreBee(attemptTexts, target, strict, st, notes, map){
     if (violation && verdict==="correct") verdict = "wrong";
   }
   if (!st.opening && strict) notes.push("Remember to say the word before spelling it.");
-  return { attempts: parsed.map(p=>p.letters), final: finalLetters, alts: finalP.alts || [], raw: attemptTexts[attemptTexts.length-1] || "", verdict, opening: !!st.opening, locked: !!st.closing,
+  let marks = verdict === "correct" ? markCheck(finalP, target, finalLetters) : null;
+  // Google sometimes writes a quick "dash" as the letter D ("fiddledfaddle"): one extra D exactly where the dash goes
+  if (verdict !== "correct" && hasMarks(target) && !violation){
+    const L = finalP.letters, f = targetForms(target)[0];
+    const m = targetMarks(target).find(m => m.ch === "-" && L.length === f.length + 1 && L[m.at] === "d" && L.slice(0, m.at) + L.slice(m.at + 1) === f);
+    if (m){ verdict = "correct"; finalLetters = f;
+      marks = markCheck({ pieces: f.split("").map(c => [c]), marks: [{ pi: m.at, ch: "-" }] }, target, f); }
+  }
+  return { attempts: parsed.map(p=>p.letters), final: finalLetters, alts: finalP.alts || [], raw: attemptTexts[attemptTexts.length-1] || "", verdict, marks, opening: !!st.opening, locked: !!st.closing,
            restarts: st.restarts.length, violation, notes, plainText: st.plainText, timed: st.timed };
 }
 /* preferred: letters transcribed separately for each window of audio (letterTexts[i] for st.windows[i]) */
@@ -496,4 +550,4 @@ function ruleMistakes(heard, word){
   }
   return out;
 }
-if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike,confirmedMixups,autoAcceptable,looksLikeGoofing,stripFillers,pairKey,AUTO_OK_MIN};
+if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike,confirmedMixups,autoAcceptable,looksLikeGoofing,stripFillers,pairKey,AUTO_OK_MIN,targetMarks,hasMarks,withMarks,markCheck};
