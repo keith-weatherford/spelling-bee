@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Handwriting Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Andika:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Handwriting test for the Spelling Bee Coach: the speller copies letters and words with a stylus, one letter per box.
+   Each box is read by Google Cloud Vision (through the Worker) and every stroke is saved so other readers can be
+   scored on exactly the same writing later. Same look as the app. */
+:root{
+  --bg:#f7f5ee; --surface:#ffffff; --ink:#1d2433; --muted:#5d6577; --line:#dedbcf;
+  --honey:#c98a00; --honey-strong:#e0a100; --honey-soft:#fcf0cc; --good:#1f7a4a; --good-soft:#dcf1e4; --bad:#b3261e; --bad-soft:#f9dedb;
+  --guide:#c9c4b3; --pen:#1d2433;
+  --display:"Andika","Atkinson Hyperlegible",system-ui,sans-serif;
+  --body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14171f; --surface:#1d2230; --ink:#eceae2; --muted:#a4abba; --line:#323a4c;
+  --honey:#f0b429; --honey-strong:#f0b429; --honey-soft:#3a2f12; --good:#5cc98c; --good-soft:#163526; --bad:#ff8a80; --bad-soft:#3d1c1a;
+  --guide:#3d4659; --pen:#eceae2;
+  color-scheme:dark;}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:17px/1.5 var(--body);padding:env(safe-area-inset-top,0px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)}
+main{max-width:900px;margin:0 auto;display:grid;gap:18px;padding-block:16px}
+h1{margin:0;font:700 1.5rem/1.2 var(--display)} h2{margin:0;font:700 1.25rem/1.25 var(--display)} h3{margin:0;font:700 1rem/1.3 var(--body)}
+p{margin:0} .muted{color:var(--muted)} .small{font-size:.875rem}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;gap:14px}
+.card > *{min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center} .between{justify-content:space-between}
+.pill{font-size:.8rem;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;background:var(--honey-soft);color:var(--honey)}
+.pill.ok{background:var(--good-soft);color:var(--good)} .pill.no{background:var(--bad-soft);color:var(--bad)}
+button{font:inherit;color:inherit;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 16px;font-weight:700;cursor:pointer;min-height:48px}
+button:focus-visible{outline:3px solid var(--honey);outline-offset:2px}
+button.primary{background:var(--honey-strong);border-color:var(--honey-strong);color:#1d2433}
+button.link{border:none;background:none;padding:6px 4px;min-height:auto;color:var(--muted);text-decoration:underline;font-weight:400}
+button:disabled{opacity:.45;cursor:default}
+.kids{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.kids button{min-height:64px;font:700 1.2rem var(--display)}
+.target{font:700 2.4rem/1.1 var(--display);letter-spacing:.06em;overflow-wrap:anywhere}
+.boxes{display:flex;flex-wrap:wrap;gap:10px;touch-action:none}
+.box{display:grid;gap:4px;justify-items:center}
+.box canvas{width:84px;height:104px;border:2px solid var(--line);border-radius:10px;background:var(--surface);touch-action:none;display:block}
+.box.filled canvas{border-color:var(--honey)}
+.box .lbl{font:700 1rem var(--display);color:var(--muted);min-height:1.4em}
+.box button{min-height:32px;padding:2px 10px;font-size:.8rem;font-weight:400}
+.progress{height:8px;border-radius:999px;background:var(--line);overflow:hidden} .progress i{display:block;height:100%;background:var(--honey-strong)}
+table{border-collapse:collapse;width:100%;font-size:.95rem} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tablewrap{overflow-x:auto}
+.read{font:700 1.05rem var(--display);letter-spacing:.04em}
+.read .x{color:var(--bad);text-decoration:underline}
+.msg{min-height:1.5em}
+</style>
+</head>
+<body>
+<main>
+  <section class="card" id="v-start">
+    <h1>Handwriting test</h1>
+    <p>Copy some letters and words with the stylus, one letter in each box. It takes about 5 minutes. This doesn't change any practice progress.</p>
+    <p class="muted small" id="startMsg">Loading spellers…</p>
+    <div class="kids" id="kidList"></div>
+  </section>
+
+  <section class="card" id="v-write" hidden>
+    <div class="row between"><h2 id="stepTitle">Letters</h2><span class="pill" id="stepCount"></span></div>
+    <div class="progress" aria-hidden="true"><i id="bar" style="width:0%"></i></div>
+    <p id="stepHint"></p>
+    <div class="target" id="target"></div>
+    <div class="boxes" id="boxes"></div>
+    <p class="msg small" id="writeMsg" role="status"></p>
+    <div class="row between">
+      <button class="link" id="clearAll">Start this one over</button>
+      <button class="primary" id="nextBtn">Next</button>
+    </div>
+  </section>
+
+  <section class="card" id="v-results" hidden>
+    <div class="row between"><h2>Results</h2><span class="pill" id="saveState">Saving…</span></div>
+    <p class="muted small">How Google Cloud Vision read <b id="resKid"></b>'s writing. The built-in reader is scored later on the same saved writing, so both are compared on exactly the same letters.</p>
+    <div class="tablewrap"><table id="sumTable"></table></div>
+    <h3>Words</h3>
+    <div class="tablewrap"><table id="wordTable"></table></div>
+    <h3>Letters read wrong</h3>
+    <p id="confusions"></p>
+    <div class="row"><button class="primary" id="againBtn">Test another speller</button></div>
+  </section>
+</main>
+
+<script src="words.js?v=1.11"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const show = v => { for (const s of document.querySelectorAll("main > section")) s.hidden = s.id !== "v-" + v; window.scrollTo(0, 0); };
+let cfg = null; try{ cfg = JSON.parse(localStorage.getItem("sb.cfg") || "null"); }catch(e){}
+async function api(path, opts = {}){
+  const r = await fetch(cfg.url + path, { ...opts, headers:{ ...(opts.headers || {}), "X-Passcode": cfg.pass } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+/* ---- the test: the alphabet once, then 10 words from the speller's practice pages ---- */
+const BOX = { w:84, h:104 };                     // logical box size (CSS px); strokes are saved in these units
+const N_WORDS = 10;
+let kid = null, steps = [], si = 0, boxes = [], session = null;
+const pageWords = p => WORDS.filter(x => x.g === p || x.g === p + 1);
+function pickWords(pages){
+  const seen = new Set(), pool = [];
+  for (const p of pages) for (const x of pageWords(p)) if (!seen.has(x.w) && /^[a-z]{3,10}$/.test(x.w)){ seen.add(x.w); pool.push(x.w); }
+  for (let i = pool.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  return pool.slice(0, N_WORDS);
+}
+async function loadKids(){
+  if (!cfg || !cfg.url || !cfg.pass){ $("startMsg").textContent = "Open the Spelling Bee app on this device and connect it first (it saves the Worker address and passcode here)."; return; }
+  try{
+    const kids = (await api("/kids")).kids || [];
+    $("startMsg").textContent = kids.length ? "Who's writing?" : "No spellers yet.";
+    $("kidList").innerHTML = "";
+    for (const k of kids){ const b = document.createElement("button"); b.textContent = k.name; b.onclick = () => start(k); $("kidList").append(b); }
+  }catch(e){ $("startMsg").textContent = "Couldn't reach the Worker: " + e.message; }
+}
+async function start(k){
+  $("startMsg").textContent = "Getting " + k.name + "'s word pages…";
+  let pages = [2];
+  try{ const d = await api("/sync?kid=" + encodeURIComponent(k.id)); if (d.profile && d.profile.pages && d.profile.pages.length) pages = d.profile.pages; }catch(e){}
+  kid = k;
+  const words = pickWords(pages);
+  steps = [{ kind:"alpha", letters:"abcdefghijklmnopqrstuvwxyz".split("") }, ...words.map(w => ({ kind:"word", w, letters:w.split("") }))];
+  session = { v:1, kid:k.id, name:k.name, at:Date.now(), ua:navigator.userAgent, box:BOX, dpr:window.devicePixelRatio || 1,
+              screen:[screen.width, screen.height], pages, items:[] };
+  si = 0; show("write"); renderStep();
+}
+
+/* ---- drawing boxes ---- */
+function makeBox(label){
+  const wrap = document.createElement("div"); wrap.className = "box";
+  const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = label || "";
+  const cv = document.createElement("canvas"); const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(BOX.w * dpr); cv.height = Math.round(BOX.h * dpr);
+  const clr = document.createElement("button"); clr.type = "button"; clr.textContent = "Erase";
+  wrap.append(lbl, cv, clr);
+  const b = { wrap, cv, strokes:[], cur:null, t0:0 };
+  const ctx = cv.getContext("2d");
+  const pen = () => getComputedStyle(document.documentElement).getPropertyValue("--pen").trim() || "#1d2433";
+  const guide = () => getComputedStyle(document.documentElement).getPropertyValue("--guide").trim() || "#c9c4b3";
+  b.redraw = () => {
+    ctx.setTransform(cv.width / BOX.w, 0, 0, cv.height / BOX.h, 0, 0);
+    ctx.clearRect(0, 0, BOX.w, BOX.h);
+    // school-paper guides: top line, dashed middle line, baseline (letters sit on the baseline)
+    ctx.strokeStyle = guide(); ctx.lineWidth = 1;
+    for (const [y, dash] of [[18, []], [48, [4, 4]], [78, []]]){ ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(4, y); ctx.lineTo(BOX.w - 4, y); ctx.stroke(); }
+    ctx.setLineDash([]); ctx.strokeStyle = pen(); ctx.lineWidth = 3.2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const s of b.strokes){ ctx.beginPath(); s.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); if (s.length === 1) ctx.lineTo(s[0][0] + .1, s[0][1]); ctx.stroke(); }
+    wrap.classList.toggle("filled", b.strokes.length > 0);
+  };
+  const pt = e => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * BOX.w * 10) / 10, Math.round((e.clientY - r.top) / r.height * BOX.h * 10) / 10, Math.round(performance.now() - b.t0)]; };
+  cv.addEventListener("pointerdown", e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); if (!b.strokes.length) b.t0 = performance.now(); b.cur = [pt(e)]; b.strokes.push(b.cur); b.pointer = e.pointerType; b.redraw(); });
+  cv.addEventListener("pointermove", e => { if (!b.cur) return; e.preventDefault(); const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e]; for (const x of (evs.length ? evs : [e])) b.cur.push(pt(x)); b.redraw(); });
+  const end = () => { b.cur = null; $("writeMsg").textContent = ""; };
+  cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
+  clr.onclick = () => { b.strokes = []; b.redraw(); };
+  b.redraw();
+  return b;
+}
+function renderStep(){
+  const st = steps[si];
+  $("stepCount").textContent = si === 0 ? "Letters" : `Word ${si} of ${steps.length - 1}`;
+  $("bar").style.width = Math.round(100 * si / steps.length) + "%";
+  $("stepTitle").textContent = st.kind === "alpha" ? "Write the alphabet" : "Copy the word";
+  $("stepHint").textContent = st.kind === "alpha" ? "Write each small letter in its box, the way you write at school." : "Write one letter in each box, the way you write at school.";
+  $("target").textContent = st.kind === "alpha" ? "" : st.w;
+  $("boxes").innerHTML = ""; $("writeMsg").textContent = "";
+  boxes = st.letters.map(L => makeBox(st.kind === "alpha" ? L : ""));
+  for (const b of boxes) $("boxes").append(b.wrap);
+  $("nextBtn").textContent = si === steps.length - 1 ? "Finish" : "Next";
+}
+$("clearAll").onclick = () => { for (const b of boxes){ b.strokes = []; b.redraw(); } };
+
+/* ---- turning strokes into pictures for the reader (black ink on white, no guide lines) ---- */
+function letterPng(strokes, cell = { w:120, h:148 }){
+  const c = document.createElement("canvas"); c.width = cell.w; c.height = cell.h; const x = c.getContext("2d");
+  x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); drawInk(x, strokes, 0, 0, cell.w / BOX.w); return c;
+}
+function drawInk(x, strokes, ox, oy, k){
+  x.strokeStyle = "#000"; x.lineWidth = 4.5 * k; x.lineCap = "round"; x.lineJoin = "round";
+  for (const s of strokes){ x.beginPath(); s.forEach(([px, py], i) => i ? x.lineTo(ox + px * k, oy + py * k) : x.moveTo(ox + px * k, oy + py * k)); if (s.length === 1) x.lineTo(ox + s[0][0] * k + .1, oy + s[0][1] * k); x.stroke(); }
+}
+/* the whole word: the boxes side by side with a gap, so each letter can be matched back to its box */
+const COMP = { pad:24, gap:36, k:1.3 };
+function wordPng(all){
+  const cw = BOX.w * COMP.k, ch = BOX.h * COMP.k;
+  const c = document.createElement("canvas"); c.width = Math.round(COMP.pad * 2 + all.length * cw + (all.length - 1) * COMP.gap); c.height = Math.round(COMP.pad * 2 + ch);
+  const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  all.forEach((strokes, i) => drawInk(x, strokes, COMP.pad + i * (cw + COMP.gap), COMP.pad, COMP.k));
+  return c;
+}
+const b64 = c => c.toDataURL("image/png").split(",")[1];
+/* which box each symbol Vision found belongs to (by the middle of its bounding box) */
+function symbolsToBoxes(symbols, n){
+  const cw = BOX.w * COMP.k, out = Array(n).fill("");
+  for (const s of symbols || []){ const mid = (s.x0 + s.x1) / 2 - COMP.pad; const i = Math.max(0, Math.min(n - 1, Math.floor((mid + COMP.gap / 2) / (cw + COMP.gap)))); out[i] += s.t; }
+  return out;
+}
+// answers are letters only, so a digit Vision returns is read as the letter it looks like ("9" for a lone g)
+const DIGIT_LOOKS = { "0":"o", "1":"l", "2":"z", "5":"s", "6":"b", "9":"g" };
+const firstLetter = t => { const m = String(t || "").toLowerCase().match(/[a-z0-9]/); return m ? (DIGIT_LOOKS[m[0]] || (/[a-z]/.test(m[0]) ? m[0] : "")) : ""; };
+
+/* ---- reading one step with Vision: each letter alone, plus (for words) the whole row with and without the handwriting hint ---- */
+async function readStep(item){
+  const letters = item.boxes.map(b => b64(letterPng(b.s)));
+  const out = { letter:[], letterRaw:[], wordHint:null, wordPlain:null, ms:{}, error:null };
+  try{
+    for (let i = 0; i < letters.length; i += 16){
+      const t0 = performance.now(); const r = await api("/vision", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ images: letters.slice(i, i + 16), hint:true }) });
+      out.ms.letter = (out.ms.letter || 0) + Math.round(performance.now() - t0);
+      for (const res of r.results){ out.letter.push(firstLetter(res.text)); out.letterRaw.push(res.text || ""); }
+    }
+    if (item.kind === "word"){
+      const img = b64(wordPng(item.boxes.map(b => b.s)));
+      for (const [key, hint] of [["wordHint", true], ["wordPlain", false]]){
+        const t0 = performance.now(); const r = await api("/vision", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ images:[img], hint }) });
+        out.ms[key] = Math.round(performance.now() - t0);
+        const res = r.results[0] || { text:"", symbols:[] };
+        out[key] = { text: res.text, perBox: symbolsToBoxes(res.symbols, item.boxes.length).map(firstLetter), symbols: res.symbols };
+      }
+    }
+  }catch(e){ out.error = String(e.message || e); }
+  return out;
+}
+
+$("nextBtn").onclick = async () => {
+  const st = steps[si];
+  const empty = boxes.findIndex(b => !b.strokes.length);
+  if (empty >= 0){ $("writeMsg").textContent = st.kind === "alpha" ? `Box ${st.letters[empty].toUpperCase()} is still empty.` : `Box ${empty + 1} is still empty.`; return; }
+  const item = { kind: st.kind, w: st.w || null, boxes: boxes.map((b, i) => ({ want: st.letters[i], s: b.strokes.map(s => s.map(([x, y, t]) => [x, y, t])), pointer: b.pointer || null })) };
+  session.items.push(item);
+  $("nextBtn").disabled = true; $("writeMsg").textContent = "";
+  readStep(item).then(r => { item.vision = r; });            // read in the background while the next word is written
+  si++;
+  $("nextBtn").disabled = false;
+  if (si < steps.length) renderStep(); else finish();
+};
+
+/* ---- results ---- */
+async function finish(){
+  show("results"); $("resKid").textContent = session.name; $("saveState").textContent = "Reading…"; $("saveState").className = "pill";
+  for (let i = 0; i < 120 && session.items.some(it => !it.vision); i++) await new Promise(r => setTimeout(r, 250));   // wait for the last reads
+  renderResults();
+  $("saveState").textContent = "Saving…";
+  try{ await api("/hwsamples?kid=" + encodeURIComponent(session.kid), { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(session) });
+    $("saveState").textContent = "Saved ✓"; $("saveState").className = "pill ok"; }
+  catch(e){ $("saveState").textContent = "Not saved: " + e.message; $("saveState").className = "pill no"; }
+}
+function score(session){
+  const eng = { letter:{ name:"Vision, one letter at a time", ok:0, n:0, words:0, nw:0, ms:[] },
+                wordHint:{ name:"Vision, whole word (handwriting hint)", ok:0, n:0, words:0, nw:0, ms:[] },
+                wordPlain:{ name:"Vision, whole word (no hint)", ok:0, n:0, words:0, nw:0, ms:[] } };
+  const conf = {}; let errors = 0;
+  for (const it of session.items){
+    const v = it.vision; if (!v || v.error){ errors++; continue; }
+    const want = it.boxes.map(b => b.want);
+    const reads = { letter: v.letter, wordHint: v.wordHint && v.wordHint.perBox, wordPlain: v.wordPlain && v.wordPlain.perBox };
+    for (const k of Object.keys(eng)){
+      const r = reads[k]; if (!r) continue; const e = eng[k];
+      let all = true; want.forEach((L, i) => { e.n++; if (r[i] === L) e.ok++; else { all = false; if (k === "letter"){ const key = `${L}→${r[i] || "nothing"}`; conf[key] = (conf[key] || 0) + 1; } } });
+      if (it.kind === "word"){ e.nw++; if (all) e.words++; }
+      if (v.ms[k]) e.ms.push(v.ms[k]);
+    }
+  }
+  return { eng, conf, errors };
+}
+function renderResults(){
+  const { eng, conf, errors } = score(session), pct = (a, b) => b ? Math.round(100 * a / b) + "%" : "—";
+  const avg = a => a.length ? (a.reduce((x, y) => x + y, 0) / a.length / 1000).toFixed(1) + " s" : "—";
+  $("sumTable").innerHTML = `<thead><tr><th>Reader</th><th>Letters right</th><th>Words right</th><th>Time per read</th></tr></thead><tbody>` +
+    Object.values(eng).map(e => `<tr><td>${esc(e.name)}</td><td>${pct(e.ok, e.n)} <span class="muted small">(${e.ok}/${e.n})</span></td><td>${e.nw ? pct(e.words, e.nw) + ` <span class="muted small">(${e.words}/${e.nw})</span>` : "—"}</td><td>${avg(e.ms)}</td></tr>`).join("") +
+    `<tr><td>Built-in reader</td><td colspan="3" class="muted">Scored later on the saved writing</td></tr></tbody>` +
+    (errors ? `<caption class="small" style="caption-side:bottom;text-align:left;color:var(--bad)">${errors} step${errors === 1 ? "" : "s"} couldn't be read by Vision (${esc((session.items.find(i => i.vision && i.vision.error) || { vision:{ error:"" } }).vision.error)}). The writing is still saved for the built-in reader.</caption>` : "");
+  const mark = (r, want) => want.map((L, i) => r && r[i] === L ? esc(L) : `<span class="x">${esc((r && r[i]) || "·")}</span>`).join("");
+  $("wordTable").innerHTML = `<thead><tr><th>Word</th><th>One letter at a time</th><th>Whole word (hint)</th><th>Whole word (no hint)</th></tr></thead><tbody>` +
+    session.items.filter(i => i.kind === "word").map(it => { const v = it.vision || {}, want = it.boxes.map(b => b.want);
+      return `<tr><td>${esc(it.w)}</td><td class="read">${mark(v.letter, want)}</td><td class="read">${mark(v.wordHint && v.wordHint.perBox, want)}</td><td class="read">${mark(v.wordPlain && v.wordPlain.perBox, want)}</td></tr>`; }).join("") + `</tbody>`;
+  const top = Object.entries(conf).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  $("confusions").innerHTML = top.length ? top.map(([k, n]) => `<span class="pill no">${esc(k)}${n > 1 ? " ×" + n : ""}</span>`).join(" ") : '<span class="muted">None (one letter at a time).</span>';
+}
+$("againBtn").onclick = () => { show("start"); loadKids(); };
+loadKids();
+</script>
+</body>
+</html>
