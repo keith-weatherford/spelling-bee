@@ -44,12 +44,15 @@ button:disabled{opacity:.45;cursor:default}
 .kids{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
 .kids button{min-height:64px;font:700 1.2rem var(--display)}
 .target{font:700 2.4rem/1.1 var(--display);letter-spacing:.06em;overflow-wrap:anywhere}
-.boxes{display:flex;flex-wrap:wrap;gap:10px;touch-action:none}
+.boxes{display:flex;flex-wrap:wrap;gap:var(--gap,10px);justify-content:center;--bw:84px;--bh:104px}
 .box{display:grid;gap:4px;justify-items:center}
-.box canvas{width:84px;height:104px;border:2px solid var(--line);border-radius:10px;background:var(--surface);touch-action:none;display:block}
+.box canvas{width:var(--bw);height:var(--bh);border:2px solid var(--line);border-radius:10px;background:var(--surface);touch-action:none;display:block}
 .box.filled canvas{border-color:var(--honey)}
-.box .lbl{font:700 1rem var(--display);color:var(--muted);min-height:1.4em}
-.box button{min-height:32px;padding:2px 10px;font-size:.8rem;font-weight:400}
+.box .lbl{font:700 1.1rem/1.3 var(--display);color:var(--muted);min-height:1.3em}
+.box button{min-height:34px;padding:2px 12px;font-size:.85rem;font-weight:400}
+#v-write{gap:10px}
+#v-write .target{font-size:clamp(1.8rem, 6vw, 2.6rem)}
+.back{justify-self:start}
 .progress{height:8px;border-radius:999px;background:var(--line);overflow:hidden} .progress i{display:block;height:100%;background:var(--honey-strong)}
 table{border-collapse:collapse;width:100%;font-size:.95rem} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
@@ -66,6 +69,7 @@ th{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.0
     <p>Copy some letters and words with the stylus, one letter in each box. It takes about 5 minutes. This doesn't change any practice progress.</p>
     <p class="muted small" id="startMsg">Loading spellers…</p>
     <div class="kids" id="kidList"></div>
+    <a class="back small muted" href="./">← Back to the app</a>
   </section>
 
   <section class="card" id="v-write" hidden>
@@ -89,7 +93,7 @@ th{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.0
     <div class="tablewrap"><table id="wordTable"></table></div>
     <h3>Letters read wrong</h3>
     <p id="confusions"></p>
-    <div class="row"><button class="primary" id="againBtn">Test another speller</button></div>
+    <div class="row between"><a class="small muted" href="./">← Back to the app</a><button class="primary" id="againBtn">Test another speller</button></div>
   </section>
 </main>
 
@@ -110,7 +114,7 @@ async function api(path, opts = {}){
 /* ---- the test: the alphabet once, then 10 words from the speller's practice pages ---- */
 const BOX = { w:84, h:104 };                     // logical box size (CSS px); strokes are saved in these units
 const N_WORDS = 10;
-let kid = null, steps = [], si = 0, boxes = [], session = null;
+let kid = null, steps = [], si = 0, boxes = [], session = null, startedFromLink = false;
 const pageWords = p => WORDS.filter(x => x.g === p || x.g === p + 1);
 function pickWords(pages){
   const seen = new Set(), pool = [];
@@ -125,6 +129,8 @@ async function loadKids(){
     $("startMsg").textContent = kids.length ? "Who's writing?" : "No spellers yet.";
     $("kidList").innerHTML = "";
     for (const k of kids){ const b = document.createElement("button"); b.textContent = k.name; b.onclick = () => start(k); $("kidList").append(b); }
+    const want = new URLSearchParams(location.search).get("kid"), pre = !startedFromLink && kids.find(k => k.id === want);
+    if (pre){ startedFromLink = true; start(pre); }
   }catch(e){ $("startMsg").textContent = "Couldn't reach the Worker: " + e.message; }
 }
 async function start(k){
@@ -133,7 +139,9 @@ async function start(k){
   try{ const d = await api("/sync?kid=" + encodeURIComponent(k.id)); if (d.profile && d.profile.pages && d.profile.pages.length) pages = d.profile.pages; }catch(e){}
   kid = k;
   const words = pickWords(pages);
-  steps = [{ kind:"alpha", letters:"abcdefghijklmnopqrstuvwxyz".split("") }, ...words.map(w => ({ kind:"word", w, letters:w.split("") }))];
+  // the alphabet in 4 screens (a-g, h-n, o-t, u-z) so every box can be big without scrolling
+  const ABC = ["abcdefg", "hijklmn", "opqrst", "uvwxyz"];
+  steps = [...ABC.map((a, i) => ({ kind:"alpha", part:i + 1, letters:a.split("") })), ...words.map(w => ({ kind:"word", w, letters:w.split("") }))];
   session = { v:1, kid:k.id, name:k.name, at:Date.now(), ua:navigator.userAgent, box:BOX, dpr:window.devicePixelRatio || 1,
               screen:[screen.width, screen.height], pages, items:[] };
   si = 0; show("write"); renderStep();
@@ -144,7 +152,7 @@ function makeBox(label){
   const wrap = document.createElement("div"); wrap.className = "box";
   const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = label || "";
   const cv = document.createElement("canvas"); const dpr = window.devicePixelRatio || 1;
-  cv.width = Math.round(BOX.w * dpr); cv.height = Math.round(BOX.h * dpr);
+  cv.width = Math.round(BOX.w * dpr); cv.height = Math.round(BOX.h * dpr);   // resized to the real box size by fitBoxes()
   const clr = document.createElement("button"); clr.type = "button"; clr.textContent = "Erase";
   wrap.append(lbl, cv, clr);
   const b = { wrap, cv, strokes:[], cur:null, t0:0 };
@@ -155,7 +163,7 @@ function makeBox(label){
     ctx.setTransform(cv.width / BOX.w, 0, 0, cv.height / BOX.h, 0, 0);
     ctx.clearRect(0, 0, BOX.w, BOX.h);
     // school-paper guides: top line, dashed middle line, baseline (letters sit on the baseline)
-    ctx.strokeStyle = guide(); ctx.lineWidth = 1;
+    ctx.strokeStyle = guide(); ctx.lineWidth = BOX.w / cv.width * 1.5 * dpr;
     for (const [y, dash] of [[18, []], [48, [4, 4]], [78, []]]){ ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(4, y); ctx.lineTo(BOX.w - 4, y); ctx.stroke(); }
     ctx.setLineDash([]); ctx.strokeStyle = pen(); ctx.lineWidth = 3.2; ctx.lineCap = "round"; ctx.lineJoin = "round";
     for (const s of b.strokes){ ctx.beginPath(); s.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); if (s.length === 1) ctx.lineTo(s[0][0] + .1, s[0][1]); ctx.stroke(); }
@@ -167,12 +175,15 @@ function makeBox(label){
   const end = () => { b.cur = null; $("writeMsg").textContent = ""; };
   cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
   clr.onclick = () => { b.strokes = []; b.redraw(); };
+  b.resize = () => { const r = cv.getBoundingClientRect(); if (!r.width) return;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr); if (cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; } b.redraw(); };
   b.redraw();
   return b;
 }
 function renderStep(){
   const st = steps[si];
-  $("stepCount").textContent = si === 0 ? "Letters" : `Word ${si} of ${steps.length - 1}`;
+  const nA = steps.filter(x => x.kind === "alpha").length;
+  $("stepCount").textContent = st.kind === "alpha" ? `Letters ${st.part} of ${nA}` : `Word ${si - nA + 1} of ${steps.length - nA}`;
   $("bar").style.width = Math.round(100 * si / steps.length) + "%";
   $("stepTitle").textContent = st.kind === "alpha" ? "Write the alphabet" : "Copy the word";
   $("stepHint").textContent = st.kind === "alpha" ? "Write each small letter in its box, the way you write at school." : "Write one letter in each box, the way you write at school.";
@@ -181,7 +192,29 @@ function renderStep(){
   boxes = st.letters.map(L => makeBox(st.kind === "alpha" ? L : ""));
   for (const b of boxes) $("boxes").append(b.wrap);
   $("nextBtn").textContent = si === steps.length - 1 ? "Finish" : "Next";
+  fitBoxes();
 }
+/* Make the boxes as big as the screen allows with everything on screen at once (no zooming, no scrolling while writing).
+   Tries every number of boxes per row and keeps the biggest box that fits the width and the height that's left. */
+function fitBoxes(){
+  const el = $("boxes"); if (!boxes.length || $("v-write").hidden) return;
+  window.scrollTo(0, 0);
+  const n = boxes.length, gap = n > 1 ? 12 : 0, W = el.clientWidth;
+  const footer = $("nextBtn").getBoundingClientRect().height + $("writeMsg").getBoundingClientRect().height + 48;
+  const H = Math.max(200, window.innerHeight - el.getBoundingClientRect().top - footer);
+  const extra = 26 + 34 + 8;                                  // letter label + Erase button + gaps around the canvas
+  const asp = BOX.w / BOX.h; let best = 60;
+  for (let per = 1; per <= n; per++){
+    const rows = Math.ceil(n / per);
+    const wByWidth = (W - (per - 1) * gap) / per, hByHeight = (H - (rows - 1) * gap) / rows - extra;
+    best = Math.max(best, Math.min(wByWidth, hByHeight * asp, 240));
+  }
+  const bw = Math.floor(best), bh = Math.round(bw / asp);
+  el.style.setProperty("--bw", bw + "px"); el.style.setProperty("--bh", bh + "px"); el.style.setProperty("--gap", gap + "px");
+  for (const b of boxes) b.resize();
+}
+let fitTimer = null;
+window.addEventListener("resize", () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitBoxes, 150); });
 $("clearAll").onclick = () => { for (const b of boxes){ b.strokes = []; b.redraw(); } };
 
 /* ---- turning strokes into pictures for the reader (black ink on white, no guide lines) ---- */

@@ -205,7 +205,7 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
       <button id="goBee"><b>Bee simulation</b><span>Say the word, spell it, say it again. One miss ends the round.</span></button>
     </div>
     <div class="verdict wait small" id="checkNote" hidden></div>
-    <div class="row"><button id="goStats">Progress</button><button id="goLetters">Letter check</button><button id="goSettings">Settings</button><button class="link" id="switchKid">Switch speller</button></div>
+    <div class="row"><button id="goStats">Progress</button><button id="goLetters">Letter check</button><button id="goSettings">Settings</button><button id="goHw">Handwriting test</button><button class="link" id="switchKid">Switch speller</button></div>
   </section>
 
   <!-- Letter check: the speller reads the alphabet so the app learns how Google hears them -->
@@ -328,12 +328,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.11"></script>
-<script src="core.js?v=1.11"></script>
+<script src="words.js?v=1.12"></script>
+<script src="core.js?v=1.12"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.11";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.12";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -1148,6 +1148,8 @@ function renderHome(){
 $("goPractice").onclick = () => startRound("practice");
 $("goReview").onclick = () => startRound("review");
 $("goBee").onclick = () => startRound("bee");
+// the handwriting test is its own page (hw-test.html); it starts with this speller and has a link back
+$("goHw").onclick = () => { syncIfNeeded(); location.href = "hw-test.html?kid=" + encodeURIComponent(kidId || ""); };
 $("goStats").onclick = () => openStats();
 $("goPatterns").onclick = () => openPatterns();
 $("patBack").onclick = () => { show("home"); renderHome(); };
