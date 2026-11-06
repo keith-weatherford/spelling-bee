@@ -99,6 +99,9 @@ label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
 .bar .track{height:12px;border-radius:6px;background:var(--line);overflow:hidden}
 .bar .fill{height:100%;background:var(--honey-strong)}
 .bar .fill.good{background:var(--good)}
+.bar.sheet{grid-template-columns:1fr auto;row-gap:4px}
+.bar.sheet .track{grid-column:1 / -1;grid-row:2;height:14px}
+.bar .fill.seen{background:var(--good-soft);box-shadow:inset 0 0 0 1px var(--good)}
 .bar span:last-child{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
 .tablewrap{overflow-x:auto;max-width:100%}
 .card > *, #statsBody > *{min-width:0}   /* let wide tables scroll inside the card instead of widening the page */
@@ -187,7 +190,7 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
       <summary><b>Add a speller</b></summary>
       <div style="display:grid;gap:12px;margin-top:12px">
         <label class="field">Name<input id="newKidName" type="text" autocomplete="off" maxlength="30"></label>
-        <div><b class="small">Word pages to practice</b><div class="chips" id="newKidPages" style="margin-top:6px"></div></div>
+        <div><b class="small">Study sheets to practice</b><div class="chips" id="newKidPages" style="margin-top:6px"></div></div>
         <button class="primary" id="addKid">Add speller</button>
       </div>
     </details>
@@ -285,9 +288,9 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
   <section class="card" id="v-settings" hidden>
     <div class="row between"><h2>Settings</h2><button class="link" id="setBack">Back</button></div>
     <label class="field">Speller's name<input id="setName" type="text" maxlength="30"></label>
-    <div><b class="small">Word pages to practice</b><p class="small muted">Each page has its own grade's words plus the next grade's, like the school list.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
+    <div><b class="small">Study sheets to practice</b><p class="small muted">The school's Scripps study sheets, 100 words each. Each sheet shares 50 words with the next grade's sheet (that's how Scripps built the list). When a sheet is turned on, every word on it comes up in Practice at least once, even words already mastered from another sheet.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
     <div><b class="small">Goal: words to know by the target date</b>
-      <p class="small muted">Pick the grade lists this speller wants to have mastered, and when. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
+      <p class="small muted">Pick the study sheets this speller wants to have mastered, and when. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
       <div class="chips" id="setGoal" style="margin-top:6px"></div>
       <label class="field" style="margin-top:10px;max-width:16rem">Target date<input type="date" id="setGoalDate"></label>
       <p class="small" id="goalWarn" hidden style="margin-top:6px;color:var(--bad)"></p></div>
@@ -328,12 +331,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.12"></script>
-<script src="core.js?v=1.12"></script>
+<script src="words.js?v=1.13"></script>
+<script src="core.js?v=1.13"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.12";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.13";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -362,7 +365,18 @@ function countdown(){
 }
 
 /* ================= words, pages, levels ================= */
-const PAGES = [2,3,4,5,6,7,8];
+const PAGES = [2,3,4,5,6,7,8];              // the school's study sheets ("Study Words for Seventh Graders" = 7)
+const ordinal = n => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+const sheetName = p => `${ordinal(p)} grade sheet`;
+/* "2nd, 3rd and 5th–8th grade sheets" */
+function sheetList(ps){
+  ps = [...new Set(ps)].sort((a,b) => a - b); const runs = [];
+  for (const p of ps){ const r = runs[runs.length-1]; if (r && p === r[1] + 1) r[1] = p; else runs.push([p, p]); }
+  const parts = runs.map(([a,b]) => a === b ? ordinal(a) : b === a + 1 ? `${ordinal(a)}, ${ordinal(b)}` : `${ordinal(a)}–${ordinal(b)}`);
+  const txt = parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length-1] : parts[0] || "";
+  return `${txt} grade sheet${ps.length === 1 ? "" : "s"}`;
+}
+const sheetsOf = w => { const x = WORD_BY.get(String(w).toLowerCase()); return x ? [x.g - 1, x.g].filter(p => PAGES.includes(p)) : []; };   // a word is on sheet g-1 and sheet g
 const pageWords = p => WORDS.filter(x => x.g === p || x.g === p + 1);
 function pool(){ const ps = (doc && doc.profile.pages) || [2]; const seen = new Set(); const out = [];
   for (const p of ps) for (const x of pageWords(p)) if (!seen.has(x.w)) { seen.add(x.w); out.push(x); } return out; }
@@ -378,7 +392,24 @@ function stats(d){                                 // per-word history, replayed
   }
   return m;
 }
-const isDue = (s, now) => !s || now - s.last >= BOX_DAYS[s.box] * DAY;
+const isDue = (s, now) => !s || now - s.last >= BOX_DAYS[s.box] * DAY;   // the plain spacing (no speller rules)
+/* v1.13: when a word comes back for this speller. The normal spacing, plus:
+   - a study sheet turned on after the word was last answered: it comes up once more (profile.sheetOn[sheet] = when)
+   - bee review: in the last BEE_REVIEW_DAYS days before the speller's target date, a word not answered since the window
+     opened, whose next normal review would land on or after the target date, comes back on one day in the window
+     (the day is picked from the word, so the extra words are spread evenly over those days) */
+const BEE_REVIEW_DAYS = 5;
+function wordHash(w){ let h = 7; for (const c of String(w)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+function dueAt(w, s, now, d = doc){
+  if (!s) return 0;
+  let at = s.last + BOX_DAYS[s.box] * DAY;
+  const prof = (d && d.profile) || {}, on = prof.sheetOn || {}, pages = prof.pages || [];
+  for (const p of sheetsOf(w)) if (on[p] && pages.includes(p) && s.last < on[p]) at = Math.min(at, on[p]);
+  const bee = goalDate(d), start = bee - BEE_REVIEW_DAYS * DAY;
+  if (now < bee && at >= bee && s.last < start) at = Math.min(at, start + (wordHash(w) % BEE_REVIEW_DAYS) * DAY);
+  return at;
+}
+const isDueW = (w, s, now, d = doc) => !s || now >= dueAt(w, s, now, d);
 
 /* ================= profile + sync ================= */
 function newDoc(name, pages){ return { profile:{ id: uid(), name, pages, len:10, rate:0.9, updatedAt: Date.now() }, attempts: [] }; }
@@ -631,10 +662,10 @@ function wordForPractice(r){
   if (ready >= 0) return WORD_BY.get(r.reask.splice(ready, 1)[0].w);
   if (r.firsts >= r.len) return r.reask.length ? WORD_BY.get(r.reask.shift().w) : null;
   const notAsked = p.filter(x => !r.asked.includes(x.w));
-  const due = notAsked.filter(x => st.has(x.w) && isDue(st.get(x.w), now))
+  const due = notAsked.filter(x => st.has(x.w) && isDueW(x.w, st.get(x.w), now))
     .sort((a,b) => { const A = st.get(a.w), B = st.get(b.w); return A.box - B.box || B.miss - A.miss || A.last - B.last; });
   const fresh = notAsked.filter(x => !st.has(x.w));
-  const rest = notAsked.filter(x => st.has(x.w) && !isDue(st.get(x.w), now)).sort((a,b) => st.get(a.w).last - st.get(b.w).last);
+  const rest = notAsked.filter(x => st.has(x.w) && !isDueW(x.w, st.get(x.w), now)).sort((a,b) => st.get(a.w).last - st.get(b.w).last);
   // mostly due words, mixed with a few new ones so the list keeps moving
   const pickNew = fresh.length && (!due.length || r.firsts % 3 === 2);
   const w = pickNew ? fresh[0] : (due[0] || fresh[0] || rest[0]);
@@ -650,7 +681,7 @@ function startRound(mode, ruleId){
   round = { id: uid(), mode, asked:[], results:[], reask:[], firsts:0, len: (doc.profile.len || 10), list:null, rule: ruleId || null };
   if (mode === "review"){ round.list = reviewList(); round.len = round.list.length; }
   if (mode === "pattern"){ round.list = patternList(ruleId); round.len = round.list.length;
-    if (!round.list.length){ alertHome("No words with that pattern on your pages."); return; } }
+    if (!round.list.length){ alertHome("No words with that pattern on your study sheets."); return; } }
   if (mode === "bee"){ round.list = pool().slice().sort(() => Math.random() - 0.5); round.len = round.list.length; }
   if (mode === "review" && !round.list.length){ alertHome("No misses to review yet. Nice!"); return; }
   const rule = mode === "pattern" ? RULES.find(r => r.id === ruleId) : null;
@@ -1041,7 +1072,7 @@ const rulesOf = entry => rulesFor(entry.w, entry).sort((a,b) => RULE_COUNT[a.id]
 function patternList(ruleId){
   const r = RULES.find(x => x.id === ruleId); if (!r) return [];
   const st = stats(doc), now = Date.now();
-  const score = x => { const s = st.get(x.w); return !s ? 1 : s.miss && s.box <= 1 ? 3 : isDue(s, now) ? 2 : 0; };
+  const score = x => { const s = st.get(x.w); return !s ? 1 : s.miss && s.box <= 1 ? 3 : isDueW(x.w, s, now) ? 2 : 0; };
   return pool().filter(x => r.tag(targetForms(x.w)[0] || "", x))
     .map(x => ({ x, k: score(x), m: (st.get(x.w)||{}).miss || 0, z: Math.random() }))
     .sort((a,b) => b.k - a.k || b.m - a.m || a.z - b.z).slice(0, doc.profile.len || 10).map(o => o.x);
@@ -1060,8 +1091,8 @@ function openPatterns(){
   $("patList").innerHTML = items.map(o => `<div class="checkitem">
       <div class="row between"><b style="font:700 1.15rem var(--display)">${esc(o.r.name)}</b>${o.miss ? `<span class="pill no">${o.miss} miss${o.miss===1?"":"es"}</span>` : ""}</div>
       <p class="small">${esc(o.r.rule)}</p>
-      <div class="row between"><span class="small muted">${o.words.length} word${o.words.length===1?"":"s"} on your pages, like ${esc(o.words.slice(0,3).map(x => x.w).join(", "))}</span>
-        <button class="primary" data-rule="${o.r.id}">Practice</button></div></div>`).join("") || '<p class="muted">No patterns found on your pages.</p>';
+      <div class="row between"><span class="small muted">${o.words.length} word${o.words.length===1?"":"s"} on your sheets, like ${esc(o.words.slice(0,3).map(x => x.w).join(", "))}</span>
+        <button class="primary" data-rule="${o.r.id}">Practice</button></div></div>`).join("") || '<p class="muted">No patterns found on your sheets.</p>';
   for (const b of $("patList").querySelectorAll("button[data-rule]")) b.onclick = () => startRound("pattern", b.dataset.rule);
   show("patterns");
 }
@@ -1130,13 +1161,13 @@ function renderHome(){
   $("hello").textContent = `Hi, ${doc.profile.name}!`;
   $("kidChip").hidden = false; $("kidChip").textContent = doc.profile.name + " · switch";
   const seen = p.filter(x => st.has(x.w)).length, mastered = p.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
-  const due = p.filter(x => st.has(x.w) && isDue(st.get(x.w), now)).length;
+  const due = p.filter(x => st.has(x.w) && isDueW(x.w, st.get(x.w), now)).length;
   const misses = reviewList().length;
   const today = doc.attempts.filter(a => !a.x && a.t >= new Date().setHours(0,0,0,0)).length;
   $("homeStats").innerHTML = [
-    [mastered + " / " + p.length, "mastered on your pages"], [seen, "words practiced"], [today, "spelled today"], [doc.profile.bestBee || 0, "best bee streak"]
+    [mastered + " / " + p.length, "mastered on your sheets"], [seen, "words practiced"], [today, "spelled today"], [doc.profile.bestBee || 0, "best bee streak"]
   ].map(([b, s]) => `<div class="stat"><b>${b}</b>${s}</div>`).join("");
-  $("practiceSub").textContent = due ? `${due} word${due===1?"":"s"} ready to review, plus new ones` : "New words from your pages";
+  $("practiceSub").textContent = due ? `${due} word${due===1?"":"s"} ready to review, plus new ones` : "New words from your sheets";
   $("reviewSub").textContent = misses ? `${misses} word${misses===1?"":"s"} to fix` : "Nothing missed yet";
   const pend = pendingOf(doc).length;
   $("checkNote").hidden = !pend;
@@ -1160,7 +1191,7 @@ $("kidChip").onclick = () => { if (!R.active) openKids(); };
 
 /* ================= kids ================= */
 function pageChips(el, chosen){
-  el.innerHTML = PAGES.map(p => `<label class="chip"><input type="checkbox" value="${p}" ${chosen.includes(p)?"checked":""}> Page ${p} <span class="small muted">(gr. ${p}${p===8?"–9":"–"+(p+1)})</span></label>`).join("");
+  el.innerHTML = PAGES.map(p => `<label class="chip"><input type="checkbox" value="${p}" ${chosen.includes(p)?"checked":""}> ${ordinal(p)} grade</label>`).join("");
 }
 const chipVals = el => [...el.querySelectorAll("input:checked")].map(x => +x.value);
 async function openKids(){
@@ -1186,7 +1217,7 @@ $("addKid").onclick = async () => {
 /* ================= settings ================= */
 function openSettings(){
   $("setName").value = doc.profile.name; pageChips($("setPages"), doc.profile.pages);
-  goalChips($("setGoal"), goalGrades(doc)); goalWarnUpdate();
+  goalChips($("setGoal"), goalSheets(doc)); goalWarnUpdate();
   $("setGoalDate").value = isoDay(goalDate(doc));
   $("setLen").value = String(doc.profile.len || 10); $("setRate").value = String(doc.profile.rate || 0.9);
   $("setAuto").value = autoStop() ? "on" : "off"; $("setWait").value = String((doc && +doc.profile.stopWait) || 2); $("setWait").disabled = !autoStop();
@@ -1219,15 +1250,22 @@ function learnedText(d){
 }
 $("setLetters").onclick = () => openLetters();
 function goalChips(el, chosen){
-  el.innerHTML = GRADES.map(g => `<label class="chip"><input type="checkbox" value="${g}" ${chosen.includes(g)?"checked":""}> Grade ${g} <span class="small muted">(${goalWordsOf([g]).length} words)</span></label>`).join("");
+  el.innerHTML = PAGES.map(p => `<label class="chip"><input type="checkbox" value="${p}" ${chosen.includes(p)?"checked":""}> ${ordinal(p)} grade</label>`).join("");
 }
-/* goal words that aren't on any practice page won't be asked: say which pages to turn on */
+/* the goal's study sheets (goals saved before v1.13 kept word levels: a sheet counts when both of its levels are in) */
+function goalSheets(d){
+  const goal = d && d.profile && d.profile.goal; if (!goal) return [];
+  if (goal.sheets) return goal.sheets.slice().sort((a,b) => a - b);
+  const g = goal.grades || []; return PAGES.filter(p => g.includes(p) && g.includes(p + 1));
+}
+const levelsOfSheets = ps => [...new Set(ps.flatMap(p => [p, p + 1]))].sort((a,b) => a - b);
+/* goal sheets that aren't turned on for practice: their words (the ones not on another turned-on sheet) won't be asked */
 function goalWarnText(goal, pages){
   const inPool = new Set(); for (const p of pages) for (const x of pageWords(p)) inPool.add(x.w);
-  const missing = goal.filter(g => goalWordsOf([g]).some(x => !inPool.has(x.w)));
-  if (!missing.length) return "";
-  const pagesFor = g => [g - 1, g].filter(p => PAGES.includes(p)).map(p => "Page " + p).join(" or ");
-  return missing.map(g => `Grade ${g} words aren't on the practice pages, so they won't be asked. Turn on ${pagesFor(g)}.`).join(" ");
+  const off = goal.filter(p => !pages.includes(p) && pageWords(p).some(x => !inPool.has(x.w)));
+  if (!off.length) return "";
+  const n = new Set(off.flatMap(p => pageWords(p).filter(x => !inPool.has(x.w)).map(x => x.w))).size;
+  return `The ${sheetList(off)} ${off.length === 1 ? "is" : "are"} in the goal but not turned on for practice, so ${n} goal word${n === 1 ? "" : "s"} won't be asked.`;
 }
 function goalWarnUpdate(){ const t = goalWarnText(chipVals($("setGoal")), chipVals($("setPages"))); $("goalWarn").textContent = t; $("goalWarn").hidden = !t; }
 $("setGoal").onchange = goalWarnUpdate; $("setPages").onchange = goalWarnUpdate;
@@ -1235,8 +1273,12 @@ $("setAuto").onchange = () => { $("setWait").disabled = $("setAuto").value === "
 $("setAutoNext").onchange = () => { $("setNextWait").disabled = $("setAutoNext").value === "off"; };
 $("setSave").onclick = () => {
   const pages = chipVals($("setPages")), goal = chipVals($("setGoal"));
-  const oldGoal = goalGrades(doc).join(",");
-  if (goal.join(",") !== oldGoal) doc.profile.goal = goal.length ? { grades: goal, setAt: Date.now() } : null;
+  if (goal.join(",") !== goalSheets(doc).join(",")) doc.profile.goal = goal.length ? { sheets: goal, grades: levelsOfSheets(goal), setAt: Date.now() } : null;
+  // a sheet just turned on: every word on it comes up once more in Practice (see dueAt)
+  const before = doc.profile.pages || [], on = { ...(doc.profile.sheetOn || {}) };
+  for (const p of pages) if (!before.includes(p)) on[p] = Date.now();
+  for (const p of Object.keys(on)) if (!pages.includes(+p)) delete on[p];
+  doc.profile.sheetOn = on;
   const gd = parseDay($("setGoalDate").value);
   if (gd) doc.profile.goalDate = isoDay(gd); else delete doc.profile.goalDate;     // cleared = back to the classroom bee
   Object.assign(doc.profile, { name: $("setName").value.trim() || doc.profile.name, pages: pages.length ? pages : doc.profile.pages,
@@ -1321,9 +1363,9 @@ function goalStatus(gp){
 function goalHtml(d){
   const gp = goalProgress(d);
   if (!gp) return `<div class="goal"><h3>Goal for the bee</h3><p class="muted">No goal yet. ${d === doc ? 'Pick the grade lists and a target date in <button class="link" id="goalSet">Settings</button> to see if this speller is on track.' : "Set one in this speller's Settings."}</p></div>`;
-  const st = goalStatus(gp), warn = goalWarnText(gp.grades, (d.profile && d.profile.pages) || [2]);
+  const st = goalStatus(gp), warn = goalWarnText(goalSheets(d), (d.profile && d.profile.pages) || [2]);
   const rows = gp.series.map(p => `<tr><td>${esc(fmtDay(p.t))}</td><td>${p.v}</td><td>${Math.round(gp.targetAt(p.t))}</td></tr>`).join("");
-  return `<div class="goal"><div class="row between"><h3>Goal for the bee: grade ${esc(gp.grades.join(", "))} list${gp.grades.length > 1 ? "s" : ""}</h3><span class="pill plain">${gp.now} / ${gp.total} mastered</span></div>
+  return `<div class="goal"><div class="row between"><h3>Goal for the bee: ${esc(goalSheets(d).length ? sheetList(goalSheets(d)) : "grade " + gp.grades.join(", ") + " words")}</h3><span class="pill plain">${gp.now} / ${gp.total} mastered</span></div>
     <div class="status ${st.ok ? "ok" : "no"}"><span aria-hidden="true">${st.ok ? "✓" : "!"}</span><span>${esc(st.head)}</span></div>
     ${st.pace ? `<p class="small muted">${esc(st.pace)}</p>` : ""}
     ${warn ? `<p class="small" style="color:var(--bad)">${esc(warn)}</p>` : ""}
@@ -1431,16 +1473,16 @@ function renderStats(){
   const poolW = []; const seenW = new Set(); for (const p of pages) for (const x of pageWords(p)) if (!seenW.has(x.w)){ seenW.add(x.w); poolW.push(x); }
   const mastered = poolW.filter(x => (st.get(x.w)||{}).box >= MASTERED).length;
   let html = checksHtml(d) + goalHtml(d) + `<div class="stats">
-    <div class="stat"><b>${mastered} / ${poolW.length}</b>mastered on practice pages</div>
+    <div class="stat"><b>${mastered} / ${poolW.length}</b>mastered on practice sheets</div>
     <div class="stat"><b>${wk === null ? "—" : wk + "%"}</b>right in the last 7 days</div>
     <div class="stat"><b>${st.size}</b>words practiced</div>
     <div class="stat"><b>${streak}</b>day streak</div>
     <div class="stat"><b>${(d.profile && d.profile.bestBee) || 0}</b>best bee streak</div></div>`;
-  // mastery by page
-  html += `<div><h3>Mastery by page</h3><p class="small muted">A word is mastered after 3 right in a row.</p><div class="bars" style="margin-top:8px">` +
+  // progress by study sheet: seen (light bar) and mastered (green, inside it)
+  html += `<div><h3>Progress by study sheet</h3><p class="small muted">Seen = answered at least once. Mastered = 3 right in a row. Neighboring sheets share 50 words.</p><div class="bars" style="margin-top:8px">` +
     PAGES.map(p => { const ws = pageWords(p), m = ws.filter(x => (st.get(x.w)||{}).box >= MASTERED).length, s = ws.filter(x => st.has(x.w)).length;
       if (!pages.includes(p) && !s) return "";
-      return `<div class="bar"><span>Page ${p}${pages.includes(p) ? "" : " (off)"}</span><div class="track"><div class="fill good" style="width:${100*m/ws.length}%"></div></div><span>${m}/${ws.length}</span></div>`; }).join("") + `</div></div>`;
+      return `<div class="bar sheet"><span>${ordinal(p)} grade${pages.includes(p) ? "" : ' <span class="muted">(off)</span>'}</span><div class="track"><div class="fill seen" style="width:${100*s/ws.length}%"><div class="fill good" style="width:${s ? 100*m/s : 0}%"></div></div></div><span>${s}/${ws.length} seen · ${m} mastered</span></div>`; }).join("") + `</div></div>`;
   // activity, last 14 days
   const counts = []; for (let i = 13; i >= 0; i--){ const day = new Date(now - i*DAY).toDateString(); counts.push(att.filter(a => new Date(a.t).toDateString() === day).length); }
   const mx = Math.max(1, ...counts);
