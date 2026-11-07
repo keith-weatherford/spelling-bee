@@ -133,8 +133,27 @@ th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mu
   dialog#wordHist{display:none!important}
   #v-stats{border:none;padding:0} #v-stats > *:not(#statsBody){display:none!important} #statsBody > *:not(.sheetwrap){display:none!important}
   .sheet .item{break-inside:avoid}
+  body.print-list main > section:not(#v-list){display:none!important}
+  body.print-list #v-list{border:none;padding:0}
+  body.print-list .wl{grid-template-columns:repeat(5,1fr);gap:4px}
+  body.print-list .wl .w{min-height:0;padding:2px 6px;gap:0;break-inside:avoid;background:#fff;border-radius:6px}
+  body.print-list .wl .w b{font-size:11pt} body.print-list .wl .st{font-size:7.5pt} body.print-list .wl .meta{display:none}
+  body.print-list #listSub{font-size:9pt} body.print-list h2{font-size:15pt}
 }
 .sr{position:absolute;left:-9999px}
+/* word lists (v1.14) */
+.wl{display:grid;grid-template-columns:repeat(auto-fill,minmax(10.5em,1fr));gap:6px}
+.wl .w{display:grid;gap:2px;align-content:start;text-align:left;padding:8px 10px;min-height:56px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-weight:400;cursor:pointer}
+.wl .w b{font:700 1.05rem/1.2 var(--display);overflow-wrap:anywhere}
+.wl .w .meta{font-size:.78rem;color:var(--muted)}
+.st{font-size:.8rem;font-weight:700;white-space:nowrap}
+.st.mastered{color:var(--good)} .st.learning{color:var(--honey)} .st.missed{color:var(--bad)} .st.unseen{color:var(--muted)}
+.wl .w.mastered{border-color:var(--good);background:var(--good-soft)}
+.wl .w.missed{border-color:var(--bad)}
+.wl-legend{display:flex;flex-wrap:wrap;gap:6px 14px}
+.filt[aria-pressed="true"]{background:var(--honey-soft);border-color:var(--honey)}
+.sheetlinks{display:flex;flex-wrap:wrap;gap:8px}
+.bar.sheet{cursor:pointer}
 .hist{display:grid;gap:8px}
 .hist details.day{border:1px solid var(--line);border-radius:12px;padding:8px 12px}
 .hist summary{cursor:pointer;min-height:40px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
@@ -284,11 +303,22 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
     <div id="statsBody" style="display:grid;gap:16px"></div>
   </section>
 
+  <!-- Word list for one study sheet (v1.14): the 100 words in the printed sheet's order, with this speller's status -->
+  <section class="card" id="v-list" hidden>
+    <div class="row between"><h2 id="listTitle">Word list</h2><button class="link noprint" id="listBack">Back</button></div>
+    <p class="small muted" id="listSub"></p>
+    <div class="chips noprint" id="listSheets" role="group" aria-label="Study sheet"></div>
+    <div class="row noprint" id="listFilters" role="group" aria-label="Show"></div>
+    <p class="small wl-legend"><span class="st mastered">✓ Mastered</span> <span class="st learning">Learning</span> <span class="st missed">✗ Missed last time</span> <span class="st unseen">○ Not seen yet</span></p>
+    <div class="wl" id="listGrid"></div>
+    <div class="row noprint"><button id="listPrint">Print this list</button></div>
+  </section>
+
   <!-- Settings -->
   <section class="card" id="v-settings" hidden>
     <div class="row between"><h2>Settings</h2><button class="link" id="setBack">Back</button></div>
     <label class="field">Speller's name<input id="setName" type="text" maxlength="30"></label>
-    <div><b class="small">Study sheets to practice</b><p class="small muted">The school's Scripps study sheets, 100 words each. Each sheet shares 50 words with the next grade's sheet (that's how Scripps built the list). When a sheet is turned on, every word on it comes up in Practice at least once, even words already mastered from another sheet.</p><div class="chips" id="setPages" style="margin-top:6px"></div></div>
+    <div><b class="small">Study sheets to practice</b><p class="small muted">The school's Scripps study sheets, 100 words each. Each sheet shares 50 words with the next grade's sheet (that's how Scripps built the list). When a sheet is turned on, every word on it comes up in Practice at least once, even words already mastered from another sheet.</p><div class="chips" id="setPages" style="margin-top:6px"></div><button class="link" id="setLists" style="margin-top:4px">See the word lists</button></div>
     <div><b class="small">Goal: words to know by the target date</b>
       <p class="small muted">Pick the study sheets this speller wants to have mastered, and when. Progress shows a chart of whether they're on track. This doesn't change which words are practiced.</p>
       <div class="chips" id="setGoal" style="margin-top:6px"></div>
@@ -331,12 +361,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.13"></script>
-<script src="core.js?v=1.13"></script>
+<script src="words.js?v=1.14"></script>
+<script src="core.js?v=1.14"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.13";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.14";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -354,7 +384,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 let cfg = store.get("sb.cfg", null);          // {url, pass, model}
 let kidId = store.get("sb.kid", null);
 let doc = null;                                // {profile, attempts}
-const views = ["setup","kids","home","play","stats","settings","letters","patterns"];
+const views = ["setup","kids","home","play","stats","settings","letters","patterns","list"];
 function show(v){ for (const x of views) $("v-"+x).hidden = x !== v; window.scrollTo(0,0); }
 
 function countdown(){
@@ -376,6 +406,7 @@ function sheetList(ps){
   const txt = parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length-1] : parts[0] || "";
   return `${txt} grade sheet${ps.length === 1 ? "" : "s"}`;
 }
+const SHEET_ORDER = {"2":["yummy","yawn","tiptoe","loaf","shrubs","shy","beets","pillows","shiny","otters","dirt","twig","tinker","disco","sapling","spin","tabby","finch","sloth","tangled","bugs","cage","blacktop","maple","quest","robe","wool","heater","wary","wry","safe","brand","morning","latch","owner","badly","paper","present","view","pimple","vine","hurry","recess","toad","orbit","purr","after","pizza","family","birthday","done","litter","ending","type","royal","crisp","holding","house","pudding","animals","face","street","kindly","hours","presto","next","loft","relax","forest","splinter","mean","fluffy","bacon","moths","wrong","soggy","alarm","radar","invent","unicorn","click","oink","globe","swoosh","gremlin","grade","mercy","yak","object","whenever","wings","lobby","hobby","plaster","garbage","before","alert","markers","lessons","Fiji"],"3":["ending","type","royal","kibble","rumbling","house","pudding","animals","cues","gangplank","kindly","hours","presto","boasted","scratched","relax","forest","splinter","prayer","distorted","bacon","moths","wrong","tireless","cardboard","radar","invent","unicorn","factory","interviews","globe","swoosh","gremlin","borrowed","guilty","yak","object","whenever","shavings","lunar","hobby","plaster","garbage","poodles","custard","markers","lessons","Fiji","gravity","shriek","loaf","shrubs","dense","abnormal","ghost","shiny","otters","groan","sneakers","mission","disco","sapling","siren","crackle","tempting","sloth","tangled","angles","inspire","majestic","maple","quest","fend","pleats","solution","wary","wry","rubbish","shivery","signals","latch","owner","tuneful","briefing","eliminate","view","pimple","artistic","obtain","universe","toad","orbit","squishy","portray","locusts","family","birthday","clumsy","squeeze","guidance"],"4":["dense","abnormal","ghost","knelt","captivity","groan","sneakers","mission","frayed","blathering","siren","crackle","tempting","sprouted","Venus","angles","inspire","majestic","relics","unwavering","fend","pleats","solution","discomfort","spectators","rubbish","shivery","signals","creatures","construction","tuneful","briefing","eliminate","dwelling","swindle","artistic","obtain","universe","rickety","infinity","squishy","portray","locusts","infested","mirror","clumsy","squeeze","guidance","despair","resemble","kibble","rumbling","pored","thirst","citizen","cues","gangplank","mulch","youthful","pronounce","boasted","scratched","coiled","shrewd","taut","prayer","distorted","glands","molten","monopoly","tireless","cardboard","axis","stalk","Florence","factory","interviews","radish","aromas","leopard","borrowed","guilty","lure","champion","comrades","shavings","lunar","griddle","salesclerk","swiveled","poodles","custard","jerkily","dollop","Borneo","gravity","shriek","stylish","gentlemen","scaffolding"],"5":["pored","thirst","citizen","beneath","dormer","mulch","youthful","pronounce","penalty","realization","coiled","shrewd","taut","mockingly","supposedly","glands","molten","monopoly","compartment","ruefully","axis","stalk","Florence","achieve","guise","radish","aromas","leopard","hoisted","pennant","lure","champion","comrades","doffing","fulcrum","griddle","salesclerk","swiveled","banishment","recognition","jerkily","dollop","Borneo","furled","governess","stylish","gentlemen","scaffolding","immune","conquering","knelt","captivity","warped","volley","alabaster","frayed","blathering","flail","perish","tendrils","sprouted","Venus","clanging","dismissal","invariably","relics","unwavering","qualify","temporary","scrimmage","discomfort","spectators","solely","anthem","procession","creatures","construction","refined","rebuked","writhing","dwelling","swindle","plodding","garret","rosette","rickety","infinity","Japanese","irked","medicinal","infested","mirror","advanced","prickliness","conservatory","despair","resemble","sensible","narration","miniature"],"6":["warped","volley","alabaster","humanitarian","sturgeon","flail","perish","tendrils","culprits","clavicle","clanging","dismissal","invariably","stagnant","damask","qualify","temporary","scrimmage","diabolical","abolition","solely","anthem","procession","buzzard","extricates","refined","rebuked","writhing","martyr","lustrous","plodding","garret","rosette","garbanzo","diminutive","Japanese","irked","medicinal","cliques","sepia","advanced","prickliness","conservatory","antagonism","rivulets","sensible","narration","miniature","couriers","barbarous","beneath","dormer","accompany","miscreant","sagacity","penalty","realization","fiddle-faddle","peasantry","gangrene","mockingly","supposedly","pronto","homily","chilblains","compartment","ruefully","calculus","suffocate","Jacuzzi","achieve","guise","fugitive","cavil","pad thai","hoisted","pennant","percussion","apprehend","relinquish","doffing","fulcrum","siesta","guava","Caribbean","banishment","recognition","hilarious","penitent","hibiscus","furled","governess","cooperage","vexation","jefe","immune","conquering","paramedic","cherished","Xanadu"],"7":["accompany","miscreant","sagacity","clichés","valise","fiddle-faddle","peasantry","gangrene","impregnable","dissertation","pronto","homily","chilblains","trenchant","recompense","calculus","suffocate","Jacuzzi","catacombs","piedmont","fugitive","cavil","pad thai","salutation","sumptuous","percussion","apprehend","relinquish","dervishes","portentously","siesta","guava","Caribbean","consonants","antecedents","hilarious","penitent","hibiscus","velveteen","gaiters","cooperage","vexation","jefe","galleon","sachet","paramedic","cherished","Xanadu","wastrels","chloroform","humanitarian","sturgeon","pegasi","redundancy","metallurgy","culprits","clavicle","armada","inertia","Prague","stagnant","damask","promenade","bronchitis","balsam","diabolical","abolition","vocational","juniper","emaciated","buzzard","extricates","reprimand","haberdashery","kelpies","martyr","lustrous","éclair","offal","corrugated","garbanzo","diminutive","indelible","garrison","amethyst","cliques","sepia","cologne","felicitously","chivalrous","antagonism","rivulets","gondolier","treacle","phalanx","couriers","barbarous","muttonchops","attenuated","cyanide"],"8":["pegasi","redundancy","metallurgy","ligatures","asseveration","armada","inertia","Prague","grenadier","lobelia","promenade","bronchitis","balsam","canapés","balustrades","vocational","juniper","emaciated","voltaic","expiation","reprimand","haberdashery","kelpies","espionage","flambeau","éclair","offal","corrugated","rapacious","solomon","indelible","garrison","amethyst","prevaricate","ambuscade","cologne","felicitously","chivalrous","acclamations","execrations","gondolier","treacle","phalanx","Harlequin","fuchsia","muttonchops","attenuated","cyanide","fascist","proboscis","clichés","valise","galette","savanna","exordium","impregnable","dissertation","noisome","balaclavas","Leipzig","trenchant","recompense","munificent","courteous","phaeton","catacombs","piedmont","affidavit","aphorism","marengo","salutation","sumptuous","glutinous","diffidence","jacquerie","dervishes","portentously","Babylon","cinnabar","beryllium","consonants","antecedents","docile","eviscerated","ichor","velveteen","gaiters","tetrarch","unguents","tergiversation","galleon","sachet","frippery","concertina","mille-feuille","wastrels","chloroform","homo sapiens","electrolysis","auf Wiedersehen"]};   // each printed sheet's order (row by row, as on the paper)
 const sheetsOf = w => { const x = WORD_BY.get(String(w).toLowerCase()); return x ? [x.g - 1, x.g].filter(p => PAGES.includes(p)) : []; };   // a word is on sheet g-1 and sheet g
 const pageWords = p => WORDS.filter(x => x.g === p || x.g === p + 1);
 function pool(){ const ps = (doc && doc.profile.pages) || [2]; const seen = new Set(); const out = [];
@@ -1249,6 +1280,7 @@ function learnedText(d){
   return out.join(" ");
 }
 $("setLetters").onclick = () => openLetters();
+$("setLists").onclick = () => { const on = chipVals($("setPages")); openList(doc, on.length ? on[on.length - 1] : 2, "settings"); };
 function goalChips(el, chosen){
   el.innerHTML = PAGES.map(p => `<label class="chip"><input type="checkbox" value="${p}" ${chosen.includes(p)?"checked":""}> ${ordinal(p)} grade</label>`).join("");
 }
@@ -1462,6 +1494,40 @@ $("statsKid").onchange = async () => {
   renderStats();
 };
 $("statsBack").onclick = () => { syncIfNeeded(); show("home"); renderHome(); };
+
+/* ================= word lists (v1.14) ================= */
+let listDoc = null, listSheet = 2, listFilter = "all", listFrom = "stats";
+function wordStatus(s){
+  if (!s) return { k:"unseen", t:"○ Not seen yet" };
+  if (s.box >= MASTERED) return { k:"mastered", t:"✓ Mastered" };
+  if (!s.streak) return { k:"missed", t:"✗ Missed last time" };
+  return { k:"learning", t:`${s.streak} right in a row` };
+}
+function openList(d, sheet, from){
+  listDoc = d; listSheet = sheet; listFilter = "all"; listFrom = from; show("list"); renderList();
+}
+function renderList(){
+  const d = listDoc, st = stats(d), on = (d.profile && d.profile.pages) || [], name = (d.profile && d.profile.name) || "";
+  const words = (SHEET_ORDER[listSheet] || []).map(w => WORD_BY.get(w.toLowerCase())).filter(Boolean);
+  const info = words.map(x => ({ x, status: wordStatus(st.get(x.w)) }));
+  const n = k => info.filter(i => i.status.k === k).length, seen = info.length - n("unseen");
+  $("listTitle").textContent = sheetName(listSheet);
+  $("listSub").textContent = `${name}: ${seen} of ${info.length} seen, ${n("mastered")} mastered. ${on.includes(listSheet) ? "Turned on for practice." : "Not turned on for practice."} Same order as the printed sheet; tap a word for its history.`;
+  $("listSheets").innerHTML = PAGES.map(p => `<button class="filt" data-sheet="${p}" aria-pressed="${p === listSheet}">${ordinal(p)} grade</button>`).join("");
+  const filters = [["all", `All (${info.length})`], ["notmastered", `Not mastered (${info.length - n("mastered")})`], ["unseen", `Not seen (${n("unseen")})`]];
+  $("listFilters").innerHTML = filters.map(([k, l]) => `<button class="filt" data-filter="${k}" aria-pressed="${k === listFilter}">${l}</button>`).join("");
+  const shown = info.filter(i => listFilter === "all" || (listFilter === "unseen" ? i.status.k === "unseen" : i.status.k !== "mastered"));
+  $("listGrid").innerHTML = shown.map(({ x, status }) => {
+    const also = sheetsOf(x.w).filter(p => p !== listSheet).map(p => `also on ${ordinal(p)}`).join(", ");
+    return `<button class="w ${status.k}" data-word="${esc(x.w)}"><b>${esc(x.w)}</b><span class="st ${status.k}">${esc(status.t)}</span>${also ? `<span class="meta">${esc(also)}</span>` : ""}</button>`; }).join("")
+    || '<p class="muted">Nothing here. Nice!</p>';
+}
+$("listSheets").onclick = e => { const b = e.target.closest("[data-sheet]"); if (!b) return; listSheet = +b.dataset.sheet; listFilter = "all"; renderList(); };
+$("listFilters").onclick = e => { const b = e.target.closest("[data-filter]"); if (!b) return; listFilter = b.dataset.filter; renderList(); };
+$("listGrid").onclick = e => { const b = e.target.closest("[data-word]"); if (b && listDoc) openWordHistory(listDoc, b.dataset.word); };
+$("listBack").onclick = () => { if (listFrom === "settings") show("settings"); else { show("stats"); renderStats(); } };
+$("listPrint").onclick = () => { document.body.classList.add("print-list"); window.print(); };
+window.addEventListener("afterprint", () => document.body.classList.remove("print-list"));
 function renderStats(){
   const d = statsDoc, st = stats(d), att = (d.attempts||[]).filter(a => !a.x && !a.p), now = Date.now();
   const pages = (d.profile && d.profile.pages) || [2];
@@ -1482,7 +1548,10 @@ function renderStats(){
   html += `<div><h3>Progress by study sheet</h3><p class="small muted">Seen = answered at least once. Mastered = 3 right in a row. Neighboring sheets share 50 words.</p><div class="bars" style="margin-top:8px">` +
     PAGES.map(p => { const ws = pageWords(p), m = ws.filter(x => (st.get(x.w)||{}).box >= MASTERED).length, s = ws.filter(x => st.has(x.w)).length;
       if (!pages.includes(p) && !s) return "";
-      return `<div class="bar sheet"><span>${ordinal(p)} grade${pages.includes(p) ? "" : ' <span class="muted">(off)</span>'}</span><div class="track"><div class="fill seen" style="width:${100*s/ws.length}%"><div class="fill good" style="width:${s ? 100*m/s : 0}%"></div></div></div><span>${s}/${ws.length} seen · ${m} mastered</span></div>`; }).join("") + `</div></div>`;
+      return `<div class="bar sheet" data-sheet="${p}" role="button" tabindex="0" aria-label="${sheetName(p)}: open the word list"><span>${ordinal(p)} grade${pages.includes(p) ? "" : ' <span class="muted">(off)</span>'}</span><div class="track"><div class="fill seen" style="width:${100*s/ws.length}%"><div class="fill good" style="width:${s ? 100*m/s : 0}%"></div></div></div><span>${s}/${ws.length} seen · ${m} mastered</span></div>`; }).join("") + `</div></div>`;
+  // word lists for every sheet, on or off
+  html += `<div><h3>Word lists</h3><p class="small muted">Each study sheet's 100 words, in the printed order, with how each word is going.</p><div class="sheetlinks" style="margin-top:8px">` +
+    PAGES.map(p => `<button data-sheet="${p}">${ordinal(p)} grade</button>`).join("") + `</div></div>`;
   // activity, last 14 days
   const counts = []; for (let i = 13; i >= 0; i--){ const day = new Date(now - i*DAY).toDateString(); counts.push(att.filter(a => new Date(a.t).toDateString() === day).length); }
   const mx = Math.max(1, ...counts);
@@ -1576,7 +1645,11 @@ function wireHistory(d){
   }
 }
 // one listener for the whole Progress page (the page is re-rendered often): tap a word to see its history
-$("statsBody").addEventListener("click", e => { const b = e.target.closest(".wordlink"); if (b && statsDoc) openWordHistory(statsDoc, b.dataset.word); });
+$("statsBody").addEventListener("click", e => {
+  const b = e.target.closest(".wordlink"); if (b && statsDoc){ openWordHistory(statsDoc, b.dataset.word); return; }
+  const sh = e.target.closest("[data-sheet]"); if (sh && statsDoc) openList(statsDoc, +sh.dataset.sheet, "stats");
+});
+$("statsBody").addEventListener("keydown", e => { const sh = e.target.closest(".bar.sheet"); if (sh && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); sh.click(); } });
 /* one word: every try in order, with the running "right in a row" count that decides mastery */
 function openWordHistory(d, w){
   const all = (d.attempts || []).filter(a => a.w === w).sort((a,b) => a.t - b.t);
