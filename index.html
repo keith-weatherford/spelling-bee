@@ -361,16 +361,16 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.14"></script>
-<script src="core.js?v=1.14"></script>
+<script src="words.js?v=1.15"></script>
+<script src="core.js?v=1.15"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.14";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.15";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
-const BOX_DAYS = [0, 1, 2, 4, 7, 14];         // how long until a word comes back, by level
+const BOX_DAYS = [0, 0, 0, 4, 7, 14];         // how long until a word comes back, by level (v1.15: no wait until it's mastered)
 const MASTERED = 3;                          // level counted as "mastered"
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -695,11 +695,15 @@ function wordForPractice(r){
   const notAsked = p.filter(x => !r.asked.includes(x.w));
   const due = notAsked.filter(x => st.has(x.w) && isDueW(x.w, st.get(x.w), now))
     .sort((a,b) => { const A = st.get(a.w), B = st.get(b.w); return A.box - B.box || B.miss - A.miss || A.last - B.last; });
+  // v1.15: words not mastered yet never wait, so they'd fill every round; take turns so mastered words that are due
+  // (their 4/7/14-day review, the bee review, a newly turned-on sheet) and new words still come up:
+  // pick 1 = a word still being learned (weakest first), pick 2 = a due mastered word (longest ago first), pick 3 = a new word
+  const weak = due.filter(x => st.get(x.w).box < MASTERED);
+  const review = due.filter(x => st.get(x.w).box >= MASTERED).sort((a,b) => st.get(a.w).last - st.get(b.w).last);
   const fresh = notAsked.filter(x => !st.has(x.w));
   const rest = notAsked.filter(x => st.has(x.w) && !isDueW(x.w, st.get(x.w), now)).sort((a,b) => st.get(a.w).last - st.get(b.w).last);
-  // mostly due words, mixed with a few new ones so the list keeps moving
-  const pickNew = fresh.length && (!due.length || r.firsts % 3 === 2);
-  const w = pickNew ? fresh[0] : (due[0] || fresh[0] || rest[0]);
+  const order = [[weak, review, fresh], [review, weak, fresh], [fresh, weak, review]][r.firsts % 3];
+  const w = (order.find(l => l.length) || [])[0] || rest[0];
   if (w) r.firsts++;
   return w || null;
 }
