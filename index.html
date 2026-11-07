@@ -164,6 +164,11 @@ tr.void td{opacity:.55} tr.void td:nth-child(2) button, tr.void td:nth-child(3){
 dialog#wordHist{border:1px solid var(--line);border-radius:16px;padding:18px;max-width:min(680px,calc(100vw - 32px));width:100%;background:var(--surface);color:var(--ink)}
 dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 #wordHistBody{display:grid;gap:10px}
+#wordHistBody h3{margin-top:6px}
+dl.wc{display:grid;gap:4px;margin:0;padding:12px 14px;border:1px dashed var(--line);border-radius:12px}
+dl.wc dt{font-weight:700;font-size:.85rem;color:var(--muted);margin-top:4px}
+dl.wc dd{margin:0}
+.wc-asks button{min-height:44px}
 .goal{display:grid;gap:10px}
 .goal .status{font-weight:700;display:flex;gap:8px;align-items:flex-start}
 .goal .status.ok{color:var(--good)} .goal .status.no{color:var(--bad)}
@@ -361,12 +366,12 @@ dialog#wordHist::backdrop{background:rgba(0,0,0,.35)}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.15"></script>
-<script src="core.js?v=1.15"></script>
+<script src="words.js?v=1.16"></script>
+<script src="core.js?v=1.16"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.15";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.16";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -1668,15 +1673,44 @@ function openWordHistory(d, w){
   const s = stats(d).get(w);
   const status = !s ? "Not answered yet." : s.box >= MASTERED ? `Mastered: ${s.streak} right in a row.`
     : s.streak ? `${s.streak} right in a row. Needs ${MASTERED - s.streak} more in a row to be mastered.` : "The last counted answer was wrong, so it starts over: 3 right in a row to master it.";
-  const e = WORD_BY.get(w);
-  $("wordHistBody").innerHTML = `<div class="row between"><h2 style="font:700 1.6rem var(--display)">${esc(w)}</h2><button class="link" id="wordHistClose">Close</button></div>
-    ${e && e.syl ? `<p class="muted">${esc(e.syl)}${e.pos ? " · " + esc(e.pos) : ""}</p>` : ""}
+  const e = WORD_BY.get(String(w).toLowerCase());
+  // v1.16: the word card - the same study aids as Practice (the word is already showing here, so nothing is given away)
+  const rs = e ? rulesOf(e).slice(0, 3) : [];
+  const study = !e ? "" : `<div class="asks wc-asks">
+      <button data-say="word">🔊 Say the word</button><button data-say="def">Definition</button><button data-say="sent">Use it in a sentence</button>
+      <button data-say="pos">Part of speech</button><button data-say="origin">Word origin</button><button data-say="slow">Say it slowly</button>
+      <button data-say="spell">Spell it out loud</button></div>
+    <dl class="wc">
+      ${e.pos ? `<dt>Part of speech</dt><dd>${esc(e.pos)}</dd>` : ""}
+      ${e.def ? `<dt>Definition</dt><dd>${esc(e.def)}</dd>` : ""}
+      ${e.sent ? `<dt>Sentence</dt><dd>${esc(e.sent)}</dd>` : ""}
+      ${e.parts ? `<dt>Word parts &amp; origin</dt><dd>${esc(e.parts)}</dd>` : ""}
+      ${e.trick ? `<dt>Memory trick</dt><dd>${esc(e.trick)} <button class="link" data-say="trick">🔊 Hear the trick</button></dd>` : ""}
+      ${rs.length ? `<dt>Spelling patterns</dt>` + rs.map(r => `<dd><b>${esc(r.name)}:</b> ${esc(r.rule)}</dd>`).join("") : ""}
+    </dl>`;
+  $("wordHistBody").innerHTML = `<div class="row between"><h2 style="font:700 1.6rem var(--display)">${esc(e ? e.w : w)}</h2><button class="link" id="wordHistClose">Close</button></div>
+    ${e && e.syl ? `<p class="muted syl">${esc(e.syl)}${e.pos ? " · " + esc(e.pos) : ""}</p>` : ""}
+    ${study}
+    <h3>How it's going</h3>
     <p><b>${esc(status)}</b></p>
     ${s ? `<p class="small muted">${s.ok} right · ${s.miss} wrong (counted answers)</p>` : ""}
     <div class="tablewrap"><table><thead><tr><th>When</th><th></th><th>Spelled</th><th>Effect</th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="4" class="muted">No tries yet.</td></tr>'}</tbody></table></div>`;
   $("wordHistClose").onclick = () => $("wordHist").close();
+  if (e) for (const b of $("wordHistBody").querySelectorAll("[data-say]")) b.onclick = () => {
+    stopSpeech();
+    const k = b.dataset.say;
+    if (k === "word") say(e.w);
+    else if (k === "def") say(e.def || "Sorry, I don't have a definition for this word.");
+    else if (k === "sent") say(e.sent || "Sorry, I don't have a sentence for this word.");
+    else if (k === "pos") say(e.pos || "Sorry, I don't have the part of speech.");
+    else if (k === "origin") say(e.parts || "Sorry, I don't have the origin for this word.");
+    else if (k === "slow") sayChunks(e);
+    else if (k === "spell") sayLetters(`${e.w} is spelled`, e.w);
+    else if (k === "trick") say(e.trick.replace(/\b([A-Z]{2,})\b/g, m => m.split("").join(" ")));
+  };
   if (!$("wordHist").open) $("wordHist").showModal();
 }
+$("wordHist").addEventListener("close", () => stopSpeech());
 /* "Needs a check": misses that differed only by sound-alike letters. A grown-up listens (if the recording is on
    this device) and decides; "Right" also teaches the app this speller's mix-up. */
 function checksHtml(d){
