@@ -22,19 +22,48 @@ function norm(s){ return s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase()
 function targetForms(word){ // "swiveled / swivelled" -> both; strip hyphens/spaces/accents
   return word.split("/").map(w => norm(w).replace(/[^a-z]/g,"")).filter(Boolean);
 }
-/* Words with a dash or a space ("fiddle-faddle", "pad thai") (v1.11).
-   targetMarks: where the breaks go, counted in letters: "fiddle-faddle" -> [{at:6, ch:"-"}] */
+/* Words the speller has to "say the marks" for (v1.11 dash/space, v1.17 capital/accented):
+   "fiddle-faddle" (dash), "pad thai" (space), "Prague" (capital), "éclair" (accented).
+   Every mark is said BEFORE a letter, so it is stored as the letter count before it:
+   "fiddle-faddle" -> [{at:6, ch:"-"}], "Prague" -> [{at:0, ch:"^"}], "éclair" -> [{at:0, ch:"´"}],
+   "auf Wiedersehen" -> [{at:3, ch:" "}, {at:3, ch:"^"}]. */
+const CAP = "^", ACC = "´";
 function targetMarks(word){
-  const w = norm(String(word).split("/")[0].trim()).replace(/[–—]/g, "-"), out = []; let n = 0;
-  for (const ch of w){ if (/[a-z]/.test(ch)) n++; else if ((ch === "-" || ch === " ") && n > 0 && !out.some(m => m.at === n)) out.push({ at:n, ch }); }
+  const w = String(word).split("/")[0].trim().normalize("NFD").replace(/[–—]/g, "-"), out = []; let n = 0;
+  const add = (at, ch) => { if (!out.some(m => m.at === at && m.ch === ch)) out.push({ at, ch }); };
+  for (const ch of w){
+    if (/[a-zA-Z]/.test(ch)){ if (/[A-Z]/.test(ch)) add(n, CAP); n++; }
+    else if (/[\u0300-\u036f]/.test(ch)){ if (n > 0) add(n - 1, ACC); }   // the accent belongs to the letter just before it
+    else if ((ch === "-" || ch === " ") && n > 0) add(n, ch);
+  }
+  return out.sort((a, b) => a.at - b.at || markRank(a.ch) - markRank(b.ch));
+}
+const markRank = ch => ch === "-" || ch === " " ? 0 : ch === CAP ? 1 : 2;   // said in this order before a letter
+const hasMarks = word => targetMarks(word || "").length > 0;
+/* what the speller says for each mark (several spellings Google writes for them) */
+const MARK_WORDS = { dash:"-", hyphen:"-", space:" ", capital:CAP, capitol:CAP, kapital:CAP, uppercase:CAP,
+  accented:ACC, acented:ACC, accent:ACC, axented:ACC };
+const MARK_SPLIT = /(capital|capitol|kapital|uppercase|accented|acented|axented|accent|dash|hyphen|space)/;
+const markSaid = ch => ch === "-" ? "dash" : ch === " " ? "space" : ch === CAP ? "capital" : "accented";
+/* letters with the marks put back in: ("fiddlefaddle", [{at:6,ch:"-"}]) -> "fiddle-faddle", ("prague", [{at:0,ch:"^"}]) -> "Prague" */
+function withMarks(letters, marks){
+  let out = ""; const ms = marks || [];
+  for (let i = 0; i <= letters.length; i++){
+    const here = ms.filter(m => m.at === i);
+    for (const m of here) if (m.ch === "-" || m.ch === " ") out += m.ch;
+    if (i < letters.length){
+      let c = letters[i];
+      if (here.some(m => m.ch === ACC)) c = (c + "\u0301").normalize("NFC");
+      if (here.some(m => m.ch === CAP)) c = c.toUpperCase();
+      out += c;
+    }
+  }
   return out;
 }
-const hasMarks = word => targetMarks(word || "").length > 0;
-const MARK_WORDS = { dash:"-", hyphen:"-", space:" " };
-/* letters with the breaks put back in: ("fiddlefaddle", [{at:6,ch:"-"}]) -> "fiddle-faddle" */
-function withMarks(letters, marks){
-  let out = "", k = 0; const ms = (marks || []).slice().sort((a,b) => a.at - b.at);
-  for (let i = 0; i <= letters.length; i++){ while (k < ms.length && ms[k].at === i){ out += ms[k].ch; k++; } if (i < letters.length) out += letters[i]; }
+/* how the word is spelled out loud, mark words included: "Prague" -> ["capital","p","r","a","g","u","e"] */
+function spellTokens(word){
+  const letters = targetForms(word)[0] || "", ms = targetMarks(word), out = [];
+  for (let i = 0; i < letters.length; i++){ for (const m of ms) if (m.at === i) out.push(markSaid(m.ch)); out.push(letters[i]); }
   return out;
 }
 /* Tokens the recognizer writes that could mean more than one thing. First entry is the primary reading. */
@@ -46,16 +75,23 @@ function parseLetters(transcript, target, opts={}){
   const forms = targetForms(target);
   // Google writes a run of spelled letters as an all-caps "acronym" (e.g. "ORS"): split it back into letters
   const expanded = String(transcript).replace(/\b[A-Z]{2,6}\b/g, m => m==="OK" ? m : m.split("").join(" "));
-  const MK = hasMarks(target);       // a word with a dash or space: "dash"/"hyphen"/"space" are breaks, not letters
+  const MK = hasMarks(target);       // a word with marks: "dash"/"space"/"capital"/"accented" are marks, not letters
   let fixed = norm(expanded).replace(/\b(double ?u|double ?you)\b/g, " w ").replace(/\b(will you|dub ?ya)\b/g, " willyou ");
   if (MK) fixed = fixed.replace(/[-–—]/g, " dash ");
   let toks = fixed.replace(/[^a-z' -]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);
-  // Google glues the break word onto the letters ("dashfaddle", "spacethai"): split it back out
-  if (MK) toks = toks.flatMap(t => t.split(/(dash|hyphen|space)/).filter(Boolean));
+  // Google glues the mark word onto the letters ("dashfaddle", "spacethai", "capitalprague", "accentedeclair"): split it back out
+  if (MK){
+    toks = toks.flatMap(t => t.split(MARK_SPLIT).filter(Boolean));
+    // "accented" heard as "accent it" / "accent ed"
+    toks = toks.filter((t, i) => !(["it","ed","id"].includes(t) && toks[i-1] === "accent"));
+  }
   // drop the word itself said before/after the letters, as in a real bee
+  // (but not when it is all that's left: "capitalprague" is capital P-R-A-G-U-E, not the word)
   const isWord = t => forms.includes(t.replace(/[^a-z]/g,""));
-  if (toks.length > 1 && isWord(toks[0])) toks = toks.slice(1);
-  if (toks.length > 1 && isWord(toks[toks.length-1])) toks = toks.slice(0,-1);
+  const isMark = t => MK && !!MARK_WORDS[t];
+  const lettersLeft = arr => arr.some(t => !isMark(t));
+  if (toks.length > 1 && isWord(toks[0]) && lettersLeft(toks.slice(1))) toks = toks.slice(1);
+  if (toks.length > 1 && isWord(toks[toks.length-1]) && lettersLeft(toks.slice(0,-1))) toks = toks.slice(0,-1);
   if (MK){   // a two-word entry said before/after the letters ("pad thai, p a d space t h a i")
     for (let k = Math.min(3, toks.length - 1); k >= 2; k--) if (isWord(toks.slice(0, k).join(""))){ toks = toks.slice(k); break; }
     for (let k = Math.min(3, toks.length - 1); k >= 2; k--) if (isWord(toks.slice(-k).join(""))){ toks = toks.slice(0, -k); break; }
@@ -80,14 +116,14 @@ function parseLetters(transcript, target, opts={}){
       // this speller's own word-for-a-letter (learned from the letter check or a grown-up's "Mark right"):
       // read it as that letter first, but keep the raw reading too
       if (opts.map && opts.map[t]){ pieces.push([opts.map[t], t, ...nameVariants(t)]); continue; }
-      if (["hyphen","dash","space","capital","uppercase","uh","um","er"].includes(t)) continue;
+      if (["hyphen","dash","space","capital","capitol","uppercase","accented","accent","uh","um","er"].includes(t)) continue;
       // Google sometimes writes a letter as its name inside a joined run ("younwavering" for U-N-W...):
       // keep the raw reading first, plus readings with letter names swapped back to letters
       merged = true; pieces.push([t, ...nameVariants(t)]); continue;
     }
     if (opts.map && opts.map[t]){ pieces.push([opts.map[t], t]); continue; }   // this speller's learned word-for-a-letter
     if (t==="willyou"){ pieces.push(["w"]); mergedWords.push("will you"); continue; }
-    if (["hyphen","dash","space","capital","uppercase","uh","er"].includes(t)) continue;
+    if (["hyphen","dash","space","capital","capitol","uppercase","accented","accent","uh","er"].includes(t)) continue;
     if (t.length===1){ pieces.push([t]); continue; }
     if (AMBIG[t]){ pieces.push(AMBIG[t]); ambiguous.push(t); continue; }
     if (TOKEN2LETTER[t]){ pieces.push([TOKEN2LETTER[t]]); continue; }
@@ -273,8 +309,8 @@ function beeStructure(plainResults, target, duration){
   }
   return { plain, opening, closing, restarts, timed, windows, plainText: plain.map(x=>x.w).join(" ") };
 }
-/* Did the speller say the dash/space in the right places? p = parseLetters result, letters = the spelling it was
-   scored as. Returns null for words without a break, else {ok, want, got, heard, missing, note}. */
+/* Did the speller say the marks (dash, space, capital, accented) in the right places? p = parseLetters result,
+   letters = the spelling it was scored as. Returns null for words without marks, else {ok, want, got, heard, missing, forgot, note}. */
 function markCheck(p, target, letters){
   const want = targetMarks(target); if (!want.length || !p) return null;
   const pieces = p.pieces || [], pm = p.marks || [];
@@ -285,14 +321,17 @@ function markCheck(p, target, letters){
   if (pieces.length <= 40) go(0, 0, []);
   if (!lens) lens = pieces.map(x => ([].concat(x)[0] || "").length);
   const offs = [0]; for (const n of lens) offs.push(offs[offs.length-1] + n);
-  const got = []; for (const m of pm){ const at = offs[Math.min(m.pi, offs.length-1)]; if (!got.some(g => g.at === at)) got.push({ at, ch:m.ch }); }
-  const ok = want.length === got.length && want.every(w => got.some(g => g.at === w.at && g.ch === w.ch));
+  const got = []; for (const m of pm){ const at = offs[Math.min(m.pi, offs.length-1)]; if (!got.some(g => g.at === at && g.ch === m.ch)) got.push({ at, ch:m.ch }); }
+  const same = (a, b) => a.at === b.at && a.ch === b.ch;
+  const forgot = want.filter(w => !got.some(g => same(g, w))), extra = got.filter(g => !want.some(w => same(g, w)));
+  const ok = !forgot.length && !extra.length;
   const missing = !got.length;
-  const U = s => s.toUpperCase(), said = ch => ch === "-" ? "dash" : "space";
-  const spoken = want.reduce((acc, m, k) => acc + ` ${said(m.ch)} ` + U(letters.slice(m.at, (want[k+1] || {at:letters.length}).at)), U(letters.slice(0, want[0].at)));
-  const kinds = [...new Set(want.map(m => "“" + said(m.ch) + "”"))].join(" and ");
-  const note = ok ? "" : missing ? `Remember to say ${kinds}: ${spoken}.` : `The break${want.length > 1 ? "s go" : " goes"} like this: ${spoken}.`;
-  return { ok, want, got, heard: withMarks(letters, got), missing, note };
+  const spoken = [];
+  for (let i = 0; i < letters.length; i++){ for (const m of want) if (m.at === i) spoken.push(markSaid(m.ch)); spoken.push(letters[i].toUpperCase()); }
+  const q = s => "“" + s + "”", kinds = [...new Set(forgot.map(m => markSaid(m.ch)))].map(q);
+  const list = kinds.length > 1 ? kinds.slice(0, -1).join(", ") + " and " + kinds[kinds.length-1] : kinds[0];
+  const note = ok ? "" : !extra.length ? `Remember to say ${list}: ${spoken.join(" ")}.` : `Say it like this: ${spoken.join(" ")}.`;
+  return { ok, want, got, heard: withMarks(letters, got), missing, forgot, note };
 }
 /* score the spelling attempts (one text per window; the last one is the answer) */
 function scoreBee(attemptTexts, target, strict, st, notes, map){
@@ -550,4 +589,4 @@ function ruleMistakes(heard, word){
   }
   return out;
 }
-if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike,confirmedMixups,autoAcceptable,looksLikeGoofing,stripFillers,pairKey,AUTO_OK_MIN,targetMarks,hasMarks,withMarks,markCheck};
+if (typeof module!=="undefined") module.exports={RULES,rulesFor,ruleMistakes,parseLetters,verdictFor,isSubseq,isCorrect,align,anyAltCorrect,targetForms,analyzeBee,analyzeBeeWindows,beeStructure,splitGlued,isLockedIn,findWordHits,findRestarts,wordsOf,scoreBee,alignPieces,alphaHeard,kidLetterMap,soundAlikeDiffs,soundsAlike,confirmedMixups,autoAcceptable,looksLikeGoofing,stripFillers,pairKey,AUTO_OK_MIN,targetMarks,hasMarks,withMarks,markCheck,spellTokens,markSaid,MARK_WORDS};

@@ -73,6 +73,8 @@ label.field{display:grid;gap:4px;font-weight:700;font-size:.9rem}
 .tile.x{border-color:var(--bad);background:var(--bad-soft);color:var(--bad)}
 .tile.gap{border-style:dashed;border-color:var(--bad);color:var(--bad);background:transparent}
 .tile.q{border-color:var(--honey);background:var(--honey-soft);color:var(--honey)}
+.tile.real{text-transform:none}
+.tile.need{outline:3px dashed var(--bad);outline-offset:2px}
 .abc{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
 .abc div{border:2px solid var(--line);border-radius:12px;padding:8px 4px;text-align:center;background:var(--bg)}
 .abc b{display:block;font:700 2rem/1.1 var(--display)}
@@ -348,10 +350,10 @@ dl.wc dd{margin:0}
     <label class="field">Mix-ups a grown-up has already OK'd<select id="setAutoOk"><option value="on">Count them right in Practice</option><option value="off">Always ask a grown-up</option></select></label>
     <p class="small muted" style="margin-top:-6px">When the app has misheard the same pair of letters (like M as N) and a grown-up said “right” at least 5 times, and never “wrong”, Practice counts it right by itself. Not used next to the partner letter (solemn, autumn) or in Bee mode. “Mark wrong” still works.</p>
     <div class="row">
-      <label class="field">Saying “dash” and “space” in Practice<select id="setMarkPractice"><option value="remind">Remind only</option><option value="required">Required</option></select></label>
-      <label class="field">Saying “dash” and “space” in Bee mode<select id="setMarkBee"><option value="required">Required</option><option value="off">Not required</option></select></label>
+      <label class="field">Saying “capital”, “dash”, “space” and “accented” in Practice<select id="setMarkPractice"><option value="remind">Remind only</option><option value="required">Required</option></select></label>
+      <label class="field">Saying “capital”, “dash”, “space” and “accented” in Bee mode<select id="setMarkBee"><option value="required">Required</option><option value="off">Not required</option></select></label>
     </div>
-    <p class="small muted" style="margin-top:-6px">For words like fiddle-faddle and pad thai. “Dash” or “hyphen” both work. Required: leaving it out or putting it in the wrong place is a miss. Otherwise it counts right with a reminder. Typed answers follow the Practice setting.</p>
+    <p class="small muted" style="margin-top:-6px">For words like Prague, fiddle-faddle, pad thai and éclair. Say “capital” or “accented” right before that letter (capital P, R, A…), and “dash” or “space” at the break (“hyphen” works too). Required: leaving one out or saying it in the wrong place is a miss. Otherwise it counts right with a reminder. Typed answers follow the Practice setting: type the capital letter, the dash or space, and é (hold down the e key on a tablet).</p>
     <div class="row"><button class="primary" id="setSave">Save</button><button id="setTest">Test the voice</button></div>
     <div><b class="small">How the app hears this speller</b><p class="small muted" id="setLearned"></p><button id="setLetters" style="margin-top:6px">Letter check</button></div>
     <hr style="border:none;border-top:1px solid var(--line);width:100%">
@@ -366,12 +368,12 @@ dl.wc dd{margin:0}
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.16"></script>
-<script src="core.js?v=1.16"></script>
+<script src="words.js?v=1.17"></script>
+<script src="core.js?v=1.17"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.16";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.17";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -597,10 +599,11 @@ async function speak(text, ssml, plainFallback){
 const say = text => speak(text, false);
 const xml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
 function lettersSsml(prefix, w){
-  const letters = withMarks(targetForms(w)[0], targetMarks(w)).split("");     // "fiddle-faddle": the dash is read as "dash"
-  const say = ch => ch === "-" ? "dash" : ch === " " ? "space" : null;
-  return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>` + letters.map(ch => say(ch) || `<say-as interpret-as="characters">${ch}</say-as>`).join('<break time="350ms"/>') + `.</speak>`,
-           plain: prefix + " " + letters.map(ch => say(ch) || ch).join(", ") + "." };
+  const toks = spellTokens(w);     // the marks are read as words: "capital, P, R…", "fiddle, dash, faddle", "accented, E, C…"
+  const isMark = t => t.length > 1;
+  const ssml = toks.map((t, i) => (isMark(t) ? xml(t) : `<say-as interpret-as="characters">${xml(t)}</say-as>`)
+    + (i < toks.length - 1 ? (isMark(t) && t !== "dash" && t !== "space" ? '<break time="120ms"/>' : '<break time="350ms"/>') : "")).join("");
+  return { ssml: `<speak>${xml(prefix)} <break time="300ms"/>${ssml}.</speak>`, plain: prefix + " " + toks.join(", ") + "." };
 }
 function sayLetters(prefix, w){ const x = lettersSsml(prefix, w); return speak(x.ssml, true, x.plain); }
 /* fetch a clip ahead of time so it plays without a pause (it's saved on the device like any other clip) */
@@ -609,7 +612,12 @@ function prefetch(text, ssml){
   if (voiceName === "device" || !cfg || ttsFailures >= 3) return;
   ttsBlob(text, ssml, voiceName, rate).catch(() => {});
 }
-const spellOut = w => withMarks(targetForms(w)[0], targetMarks(w)).split("").map(ch => ch === "-" ? "dash" : ch === " " ? "space" : ch).join(", ");
+const spellOut = w => spellTokens(w).join(", ");
+/* the word's own letters, capitals and accents kept: "Prague" -> P r a g u e, "éclair" -> é c l a i r */
+function realLetters(w){
+  const f = targetForms(w)[0] || "", r = [...String(w).split("/")[0].trim().normalize("NFC")].filter(c => /\p{L}/u.test(c));
+  return r.length === f.length ? r : f.split("");
+}
 /* "say it slowly": each syllable with a pause, so the word can be heard in chunks */
 function sayChunks(entry){
   const parts = String(entry.syl || entry.w).split("·");
@@ -800,9 +808,9 @@ function autoOkNote(diffs){
   return `Counted right: the app often hears ${ps.join(" and ")} for ${doc.profile.name}, and a grown-up has OK'd that before.`;
 }
 const GOOF_MSG = "I didn't catch that. Just the letters, please. Tap and try again.";
-/* words with a dash or space (v1.11): is saying "dash"/"space" required? Practice: off unless set; Bee: on unless set off */
+/* words with marks (v1.11 dash/space, v1.17 capital/accented): is saying them required? Practice: off unless set; Bee: on unless set off */
 const markRequired = mode => mode === "bee" ? !(doc && doc.profile.markBee === "off") : !!(doc && doc.profile.markPractice === "required");
-/* the letters were right: check the dash/space too (mk = markCheck(...), null for ordinary words) */
+/* the letters were right: check the marks too (mk = markCheck(...), null for ordinary words) */
 function rightLetters(letters, mk, mode, note, extra){
   const n = s => [note, s].filter(Boolean).join(" ");
   if (!mk) return showResult(true, letters, mode, note || "", extra);
@@ -1021,7 +1029,7 @@ $("typeToggle").onclick = () => { $("typeBox").hidden = !$("typeBox").hidden; if
 $("typeBox").onsubmit = e => { e.preventDefault(); const raw = $("typeIn").value, t = clean(raw); if (!t) return;
   const w = round.current.w;
   if (!isCorrect(t, w)) return showResult(false, t, "type");
-  // a typed dash or space: same check as a spoken one ("fiddle faddle" for fiddle-faddle)
+  // a typed dash, space, capital or accent: same check as a spoken one ("fiddle faddle" for fiddle-faddle, "prague" for Prague)
   const got = targetMarks(raw), p = { pieces: t.split("").map(c => [c]), marks: got.map(m => ({ pi: m.at, ch: m.ch })) };
   rightLetters(t, markCheck(p, w, t), "type", "");
 };
@@ -1035,11 +1043,11 @@ function showResult(ok, heard, mode, note, extra = {}){
   if (extra.raw) at.r = String(extra.raw).slice(0, 300);           // what Google wrote, for learning from "Mark right"
   if (pending) at.p = 1;
   if (extra.aa) at.aa = 1;                                         // counted right by a mix-up a grown-up already OK'd
-  if (extra.hm && extra.hm !== heard) at.hm = extra.hm;            // what was said with the dash/space ("fiddle-faddle")
+  if (extra.hm && extra.hm !== heard) at.hm = extra.hm;            // what was said with the marks ("fiddle-faddle", "Prague")
   if (extra.eng === "browser") at.e = "b";
   doc.attempts.push(at); saveLocal(); markDirty(at.id);
   if (pending && extra.clip) saveClip(at.id, extra.clip);
-  round.attemptId = at.id; round.results.push({ w, ok, h: heard, p: !!pending });
+  round.attemptId = at.id; round.results.push({ w, ok, h: at.hm || heard, p: !!pending });
   if (!ok && round.mode !== "bee") round.reask.push({ w, at: round.asked.length });
   $("spellArea").hidden = true; $("resultArea").hidden = false; $("asks").hidden = false;
   const v = $("verdict"); v.className = "verdict " + (ok ? "ok celebrate" : pending ? "wait" : "no");
@@ -1047,14 +1055,20 @@ function showResult(ok, heard, mode, note, extra = {}){
   const tiles = $("tiles"); tiles.innerHTML = "";
   for (const o of align(extra.aa ? targetForms(w)[0] : heard, w)){ const t = document.createElement("span"); t.className = "tile " + (pending && o.t === "x" ? "q" : o.t); t.textContent = o.ch;
     if (o.t === "x" || o.t === "gap") t.title = "Should be: " + (o.want || "(nothing)"); tiles.append(t); }
-  // dash/space tiles where the word has them: plain when said, red outline when missing or misplaced
-  if (extra.marks && clean(heard) === targetForms(w)[0]){ const kids = [...tiles.children];
-    for (const m of extra.marks.want.slice().sort((a,b) => b.at - a.at)){ const t = document.createElement("span"), hit = extra.marks.got.some(g => g.at === m.at && g.ch === m.ch);
+  // marks where the word has them: a dash/space tile, or the capital/accented letter itself.
+  // Plain when said, red outline when missing or in the wrong place
+  if (extra.marks && clean(heard) === targetForms(w)[0]){ const kids = [...tiles.children], real = realLetters(w);
+    const hitOf = m => extra.marks.got.some(g => g.at === m.at && g.ch === m.ch);
+    for (const m of extra.marks.want) if ((m.ch === "^" || m.ch === "´") && kids[m.at]){ const t = kids[m.at];
+      if (hitOf(m)){ t.textContent = real[m.at]; t.classList.add("real"); }
+      else { t.classList.add("need"); t.title = `Say “${markSaid(m.ch)}” before this letter`; } }
+    for (const m of extra.marks.want.filter(m => m.ch === "-" || m.ch === " ").sort((a,b) => b.at - a.at)){ const t = document.createElement("span"), hit = hitOf(m);
       t.className = "tile " + (hit ? "m" : "gap"); t.textContent = m.ch === "-" ? "–" : "␣"; t.title = m.ch === "-" ? "dash" : "space"; tiles.insertBefore(t, kids[m.at] || null); } }
   const forms = targetForms(w);
   // underline the letters of the right spelling that were missed or wrong (lined up the same way as the tiles)
-  const marks = ok ? forms[0].split("").map(ch => esc(ch)) : align(heard, w).filter(o => o.want).map(o => o.t === "m" ? esc(o.want) : `<span class="w">${esc(o.want)}</span>`);
-  for (const m of targetMarks(w).slice().sort((a,b) => b.at - a.at)) marks.splice(m.at, 0, m.ch === "-" ? "-" : "&nbsp;");   // fiddle-faddle, pad thai
+  const real = realLetters(w); let j = 0;   // shown with its capitals and accents (Prague, éclair)
+  const marks = ok ? real.map(ch => esc(ch)) : align(heard, w).filter(o => o.want).map(o => { const c = esc(real[j++] || o.want); return o.t === "m" ? c : `<span class="w">${c}</span>`; });
+  for (const m of targetMarks(w).filter(m => m.ch === "-" || m.ch === " ").sort((a,b) => b.at - a.at)) marks.splice(m.at, 0, m.ch === "-" ? "-" : "&nbsp;");   // fiddle-faddle, pad thai
   $("answer").innerHTML = marks.join("")
     + (forms.length > 1 ? ` <span class="small muted">or ${esc(forms[1])}</span>` : "");
   $("detail").textContent = (note ? note + " " : "") + (ok ? "" : pending ? pendingNote(pending) : mistakeNote(heard, w));
