@@ -285,6 +285,7 @@ dl.wc dd{margin:0}
       <div class="row">
         <button class="primary" id="nextBtn">Next word</button>
         <button id="redoBtn">That's not what I said</button>
+        <button id="hearMine" hidden>🔊 Hear my answer</button>
       </div>
       <div class="row between" id="autoNextBar" hidden style="background:var(--good-soft);color:var(--good);border-radius:12px;padding:8px 12px;font-weight:700"><span id="autoNextMsg">Next word coming up…</span><button id="stayBtn">Stay on this word</button></div>
       <div class="row small"><span class="muted">Grown-up check:</span><button class="link" id="markRight">Mark right</button><button class="link" id="markWrong">Mark wrong</button></div>
@@ -362,18 +363,20 @@ dl.wc dd{margin:0}
     <label class="field">Passcode<input id="setPass" type="password" autocomplete="off"></label>
     <label class="field">Speech recognizer<select id="setEngine"><option value="google">Google Cloud (best for letters)</option><option value="browser">This device's browser (Practice only)</option></select></label>
     <p class="small muted" id="engineNote" style="margin-top:-6px"></p>
+    <label class="field">Keep answer recordings<select id="setClips"><option value="0">Off</option><option value="10">Up to 10 MB (about 30 answers)</option><option value="25">Up to 25 MB (about 80 answers)</option><option value="50">Up to 50 MB (about 160 answers)</option><option value="100">Up to 100 MB (about 330 answers)</option></select></label>
+    <p class="small muted" style="margin-top:-6px"><span id="clipUse"></span> Each spoken answer is kept on this device only (never uploaded), so a grown-up can play it back on the answer screen, in History or on a word card. When the limit is reached, the oldest are deleted first; answers still waiting for a grown-up check are kept longest. Off: nothing is kept, but the answer just given can still be played until the next word. <button class="link" id="clipDel">Delete all recordings</button></p>
     <label class="field">Speech model (Google Cloud)<select id="setModel"><option value="default">default</option><option value="latest_short">latest_short</option><option value="command_and_search">command_and_search</option></select></label>
     <div class="row"><button id="setDevSave">Save device settings</button><span class="status" id="setMsg"></span></div>
   </section>
 </main>
 <dialog id="wordHist" aria-label="Word history"><div id="wordHistBody"></div></dialog>
 
-<script src="words.js?v=1.17"></script>
-<script src="core.js?v=1.17"></script>
+<script src="words.js?v=1.18"></script>
+<script src="core.js?v=1.18"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
-const APP_VERSION = "1.17";   // keep in step with the ?v= on words.js and core.js above
+const APP_VERSION = "1.18";   // keep in step with the ?v= on words.js and core.js above
 const BEE_DAY = new Date(2026, 10, 11);      // classroom bee: Wed Nov 11, 2026
 const FINALS_DAY = new Date(2026, 10, 13);   // Grammar School bee: Fri Nov 13
 const DAY = 86400000;
@@ -680,22 +683,78 @@ document.addEventListener("visibilitychange", () => { if (document.hidden && B.o
   if (document.hidden && R.active){ recStop();
   if (lMic === "listening") setLettersMic("idle", "Paused while the app was in the background.");
   else if (round) cancelListening("Paused while the app was in the background."); } });
-/* the speller's recording of a "needs a check" word, kept on this device only so a grown-up can listen */
+/* Answer recordings (v1.18): every spoken answer is kept on this device only (Cache Storage), so a grown-up can
+   play it back. Limited by a per-device size setting; the oldest go first, undecided "needs a check" answers last.
+   An index in localStorage (sb.clips) keeps each recording's size, time and speller. */
 const clipCacheName = "clips-v1", clipKey = id => "https://clip.cache/" + encodeURIComponent(id);
+const CLIP_MB_OPTS = [0, 10, 25, 50, 100];
+const clipMB = () => { const v = +store.get("sb.clipMB", 25); return CLIP_MB_OPTS.includes(v) ? v : 25; };
+const clipIndex = () => { const x = store.get("sb.clips", []); return Array.isArray(x) ? x : []; };
+let clipIds = new Set(clipIndex().map(c => c.id));
+function setClipIndex(list){ store.set("sb.clips", list); clipIds = new Set(list.map(c => c.id)); }
+let lastRec = null;                          // the recording behind the answer being checked (raw PCM)
 function wavOf(pcm){                          // 16 kHz, 16-bit mono PCM -> WAV
   const h = new DataView(new ArrayBuffer(44)), n = pcm.size, str = (o, t) => { for (let i = 0; i < t.length; i++) h.setUint8(o+i, t.charCodeAt(i)); };
   str(0,"RIFF"); h.setUint32(4, 36+n, true); str(8,"WAVE"); str(12,"fmt "); h.setUint32(16,16,true); h.setUint16(20,1,true); h.setUint16(22,1,true);
   h.setUint32(24,16000,true); h.setUint32(28,32000,true); h.setUint16(32,2,true); h.setUint16(34,16,true); str(36,"data"); h.setUint32(40,n,true);
   return new Blob([h.buffer, pcm], { type:"audio/wav" });
 }
-async function saveClip(id, pcm){
-  try{ const c = await caches.open(clipCacheName); await c.put(clipKey(id), new Response(wavOf(pcm), { headers:{ "Content-Type":"audio/wav" } }));
-    const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - 60))) await c.delete(k); }catch(e){}
+async function saveClip(id, blob){
+  const limit = clipMB() * 1e6;
+  if (!limit || !window.caches || blob.size > limit) return false;
+  try{ const c = await caches.open(clipCacheName); await c.put(clipKey(id), new Response(blob, { headers:{ "Content-Type":"audio/wav" } }));
+    const list = clipIndex().filter(x => x.id !== id); list.push({ id, b: blob.size, t: Date.now(), k: doc ? doc.profile.id : "" });
+    setClipIndex(list); await pruneClips(); return true; }catch(e){ return false; }
 }
+/* answers still waiting for a grown-up check, for every speller saved on this device */
+function pendingIds(){
+  const ids = new Set();
+  for (const k of new Set(clipIndex().map(c => c.k).filter(Boolean))){
+    const d = doc && doc.profile.id === k ? doc : store.get("sb.doc." + k, null);
+    for (const a of (d && d.attempts) || []) if (a.p && !a.x) ids.add(a.id);
+  }
+  return ids;
+}
+/* delete the oldest recordings until the total fits the limit (undecided checks last) */
+async function pruneClips(limit = clipMB() * 1e6){
+  const list = clipIndex().slice().sort((a, b) => a.t - b.t);
+  let total = list.reduce((n, x) => n + (x.b || 0), 0);
+  if (total <= limit) return 0;
+  const pend = pendingIds(), drop = new Set();
+  for (const lastly of [false, true]) for (const x of list){
+    if (total <= limit) break;
+    if (drop.has(x.id) || pend.has(x.id) !== lastly) continue;
+    drop.add(x.id); total -= x.b || 0;
+  }
+  try{ const c = await caches.open(clipCacheName); for (const id of drop) await c.delete(clipKey(id)); }catch(e){}
+  setClipIndex(clipIndex().filter(x => !drop.has(x.id)));
+  return drop.size;
+}
+/* line the index up with what's really stored (the browser may clear storage; v1.17 and older kept checks without an index) */
+async function reconcileClips(){
+  if (!window.caches) return;
+  try{
+    const c = await caches.open(clipCacheName), keys = await c.keys(), have = new Set(keys.map(r => r.url));
+    let list = clipIndex().filter(x => have.has(clipKey(x.id)));
+    const known = new Set(list.map(x => clipKey(x.id)));
+    for (const r of keys) if (!known.has(r.url)){
+      const m = await c.match(r); if (!m) continue;
+      const id = decodeURIComponent(r.url.replace("https://clip.cache/", ""));
+      list.push({ id, b: (await m.blob()).size, t: 0, k: "" });       // older recording: treated as the oldest
+    }
+    setClipIndex(list); await pruneClips();
+  }catch(e){}
+}
+const clipUsage = () => { const l = clipIndex(); return { n: l.length, mb: l.reduce((n, x) => n + (x.b || 0), 0) / 1e6 }; };
+async function deleteAllClips(){ try{ await caches.delete(clipCacheName); }catch(e){} setClipIndex([]); }
 async function hasClip(id){ try{ return !!(await (await caches.open(clipCacheName)).match(clipKey(id))); }catch(e){ return false; } }
+function playBlob(blob){
+  stopSpeech(); const url = URL.createObjectURL(blob); player.src = url; player.onended = () => URL.revokeObjectURL(url);
+  return player.play().then(() => true, () => false);
+}
 async function playClip(id){
-  try{ const r = await (await caches.open(clipCacheName)).match(clipKey(id)); if (!r) return;
-    stopSpeech(); const url = URL.createObjectURL(await r.blob()); player.src = url; player.onended = () => URL.revokeObjectURL(url); await player.play(); }catch(e){}
+  try{ const r = await (await caches.open(clipCacheName)).match(clipKey(id)); if (!r) return false;
+    return await playBlob(await r.blob()); }catch(e){ return false; }
 }
 
 /* ================= rounds ================= */
@@ -867,7 +926,7 @@ async function finishPractice(){
   if (dur < 0.4){ setMic("idle", "I didn't hear anything. Tap and try again."); return; }
   const w = round.current.w;
   try{
-    const clip = recClip(0, dur);
+    const clip = recClip(0, dur); lastRec = clip;
     const d = await transcribe(clip, "letters");
     const km = kidMap(), raw = textOf(d);
     const a = scoreBee([raw], w, false, { opening:true, closing:null, restarts:[], plainText:"", timed:true }, [], km.tokens);
@@ -1004,7 +1063,8 @@ async function finishBee(){
   const dur = recDuration(); recStop(); setMic("checking", "Locked in. Checking…");
   const w = round.current.w, km = kidMap();
   try{
-    const pl = await transcribe(recClip(0, dur), "plain", w);
+    const full = recClip(0, dur); lastRec = full;
+    const pl = await transcribe(full, "plain", w);
     const st = beeStructure(pl.results, w, dur);
     let a;
     if (st.timed){
@@ -1046,7 +1106,10 @@ function showResult(ok, heard, mode, note, extra = {}){
   if (extra.hm && extra.hm !== heard) at.hm = extra.hm;            // what was said with the marks ("fiddle-faddle", "Prague")
   if (extra.eng === "browser") at.e = "b";
   doc.attempts.push(at); saveLocal(); markDirty(at.id);
-  if (pending && extra.clip) saveClip(at.id, extra.clip);
+  // the speller's recording (spoken answers through Google only: typed answers and the device recognizer have no audio)
+  const rec = mode !== "type" && extra.eng !== "browser" ? (extra.clip || lastRec) : null; lastRec = null;
+  round.recBlob = rec ? wavOf(rec) : null; $("hearMine").hidden = !rec; $("hearMine").textContent = "🔊 Hear my answer";
+  if (rec) saveClip(at.id, round.recBlob);
   round.attemptId = at.id; round.results.push({ w, ok, h: at.hm || heard, p: !!pending });
   if (!ok && round.mode !== "bee") round.reask.push({ w, at: round.asked.length });
   $("spellArea").hidden = true; $("resultArea").hidden = false; $("asks").hidden = false;
@@ -1151,6 +1214,10 @@ function openPatterns(){
   show("patterns");
 }
 $("nextBtn").onclick = () => { cancelAutoNext(); if (round.mode === "bee" && round.results.length && !round.results[round.results.length-1].ok) finishRound(); else nextWord(); };
+$("hearMine").onclick = async () => {      // play the answer back so a grown-up can check it (Mark right / Mark wrong below)
+  cancelAutoNext(); if (!round || !round.recBlob) return;
+  if (!(await playBlob(round.recBlob))) $("hearMine").textContent = "Couldn't play it";
+};
 $("redoBtn").onclick = () => {            // the app misheard: void this attempt and try again
   cancelAutoNext();
   const a = doc.attempts.find(x => x.id === round.attemptId); if (a){ a.x = 1; a.u = Date.now(); saveLocal(); markDirty(a.id); }
@@ -1281,6 +1348,7 @@ function openSettings(){
   $("setVoice").value = doc.profile.voice || "en-US-Chirp3-HD-Kore";
   $("setUrl").value = cfg.url; $("setPass").value = cfg.pass; $("setModel").value = cfg.model || "default"; $("setMsg").textContent = "";
   $("setEngine").value = cfg.engine === "browser" ? "browser" : "google"; engineNote();
+  $("setClips").value = String(clipMB()); showClipUse(); reconcileClips().then(showClipUse);
   $("setLearned").textContent = learnedText(doc); $("setAutoOk").value = autoOkOn() ? "on" : "off";
   $("setMarkPractice").value = markRequired("practice") ? "required" : "remind"; $("setMarkBee").value = markRequired("bee") ? "required" : "off";
   show("settings");
@@ -1356,6 +1424,13 @@ function engineNote(){
     : "Used for Practice, Review and patterns. Bee mode and the letter check still use Google Cloud. On an iPad this is Apple's recognizer and needs Wi-Fi. Save device settings to apply.";
 }
 $("setEngine").onchange = engineNote;
+function showClipUse(msg){ const u = clipUsage();
+  $("clipUse").textContent = (msg ? msg + " " : "") + (u.n ? `Using ${u.mb.toFixed(1)} MB for ${u.n} recording${u.n === 1 ? "" : "s"}.` : "No recordings on this device yet.");
+  $("clipDel").hidden = !u.n; }
+$("setClips").onchange = async () => { store.set("sb.clipMB", +$("setClips").value);   // applies right away on this device
+  const n = await pruneClips(); showClipUse(n ? `Limit saved. Deleted ${n} of the oldest to fit.` : "Limit saved."); };
+$("clipDel").onclick = async () => { if (!confirm("Delete every answer recording on this device? This can't be undone.")) return;
+  await deleteAllClips(); showClipUse("Deleted."); };
 $("setTest").onclick = () => {          // try the picked voice and speed without saving
   const keep = { voice: doc.profile.voice, rate: doc.profile.rate };
   doc.profile.voice = $("setVoice").value; doc.profile.rate = +$("setRate").value; ttsFailures = 0;
@@ -1640,6 +1715,9 @@ function attemptNote(a){
   return n.join(" · ");
 }
 const resultMark = a => a.x ? "—" : a.p ? "?" : a.ok ? "✓" : "✗";
+/* play button for an answer whose recording is on this device */
+const clipBtn = a => clipIds.has(a.id) ? ` <button class="link clipplay" data-clip="${esc(a.id)}" title="Hear this answer" aria-label="Hear this answer">🔊</button>` : "";
+async function onClipPlay(b){ if (!(await playClip(b.dataset.clip))){ b.textContent = "(gone)"; b.disabled = true; } }
 const resultClass = a => a.x || a.p ? "plain" : a.ok ? "ok" : "no";
 function historyHtml(d){
   const rounds = roundsOf(d.attempts || []);
@@ -1656,7 +1734,7 @@ function dayBodyHtml(d, day){
   return rounds.map(r => { const counted = r.filter(a => !a.x && !a.p);
     return `<div class="round"><div class="row between"><b>${esc(roundLabel(r))}</b><span class="small muted">${esc(fmtTime(r[0].t))} · ${counted.filter(a => a.ok).length} of ${counted.length} right</span></div>
       <div class="tablewrap"><table><thead><tr><th></th><th>Word</th><th>Spelled</th><th>Notes</th></tr></thead><tbody>` +
-      r.map(a => `<tr class="${a.x ? "void" : ""}"><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td><button class="link wordlink" data-word="${esc(a.w)}">${esc(a.w)}</button></td><td>${esc(a.hm || a.h || "")}</td><td class="small muted">${esc(attemptNote(a))}</td></tr>`).join("") +
+      r.map(a => `<tr class="${a.x ? "void" : ""}"><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td><button class="link wordlink" data-word="${esc(a.w)}">${esc(a.w)}</button></td><td>${esc(a.hm || a.h || "")}${clipBtn(a)}</td><td class="small muted">${esc(attemptNote(a))}</td></tr>`).join("") +
       `</tbody></table></div></div>`; }).join("");
 }
 function wireHistory(d){
@@ -1669,6 +1747,7 @@ function wireHistory(d){
 }
 // one listener for the whole Progress page (the page is re-rendered often): tap a word to see its history
 $("statsBody").addEventListener("click", e => {
+  const cp = e.target.closest(".clipplay"); if (cp){ onClipPlay(cp); return; }
   const b = e.target.closest(".wordlink"); if (b && statsDoc){ openWordHistory(statsDoc, b.dataset.word); return; }
   const sh = e.target.closest("[data-sheet]"); if (sh && statsDoc) openList(statsDoc, +sh.dataset.sheet, "stats");
 });
@@ -1683,7 +1762,7 @@ function openWordHistory(d, w){
     else if (a.p) effect = "not counted yet";
     else if (a.ok){ level = Math.min(5, level + 1); streak++; effect = `${streak} right in a row` + (level >= MASTERED && streak === MASTERED ? " → mastered" : ""); }
     else { level = 0; streak = 0; effect = "back to 0"; }
-    return `<tr class="${a.x ? "void" : ""}"><td class="small">${esc(fmtDate(a.t))}<br><span class="muted">${esc(fmtTime(a.t))}</span></td><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td>${esc(a.hm || a.h || "")}</td><td class="small">${esc(effect)}${attemptNote(a) ? `<br><span class="muted">${esc(attemptNote(a))}</span>` : ""}</td></tr>`; });
+    return `<tr class="${a.x ? "void" : ""}"><td class="small">${esc(fmtDate(a.t))}<br><span class="muted">${esc(fmtTime(a.t))}</span></td><td><span class="pill ${resultClass(a)}">${resultMark(a)}</span></td><td>${esc(a.hm || a.h || "")}${clipBtn(a)}</td><td class="small">${esc(effect)}${attemptNote(a) ? `<br><span class="muted">${esc(attemptNote(a))}</span>` : ""}</td></tr>`; });
   const s = stats(d).get(w);
   const status = !s ? "Not answered yet." : s.box >= MASTERED ? `Mastered: ${s.streak} right in a row.`
     : s.streak ? `${s.streak} right in a row. Needs ${MASTERED - s.streak} more in a row to be mastered.` : "The last counted answer was wrong, so it starts over: 3 right in a row to master it.";
@@ -1725,6 +1804,7 @@ function openWordHistory(d, w){
   if (!$("wordHist").open) $("wordHist").showModal();
 }
 $("wordHist").addEventListener("close", () => stopSpeech());
+$("wordHistBody").addEventListener("click", e => { const cp = e.target.closest(".clipplay"); if (cp) onClipPlay(cp); });
 /* "Needs a check": misses that differed only by sound-alike letters. A grown-up listens (if the recording is on
    this device) and decides; "Right" also teaches the app this speller's mix-up. */
 function checksHtml(d){
@@ -1834,6 +1914,7 @@ function finishAlphabet(){
 /* ================= start ================= */
 async function boot(){
   $("ver").textContent = "v" + APP_VERSION; countdown();
+  setTimeout(reconcileClips, 4000);          // tidy answer recordings to this device's limit
   if (!cfg || !cfg.url){ show("setup"); return; }
   if (!kidId){ openKids(); return; }
   await pullKid(kidId);
